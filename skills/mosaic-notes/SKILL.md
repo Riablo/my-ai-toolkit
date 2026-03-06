@@ -63,6 +63,10 @@ uv run SKILL_DIR/scripts/fetch_album_info.py "<专辑名>" "<艺术家>"
 uv run SKILL_DIR/scripts/fetch_omdb_info.py "<片名>" --type movie|series
 ```
 
+### 命令参考
+
+运行 `obsidian help` 查看所有可用命令和用法。遇到不确定的命令时，优先通过此命令获取最新信息。
+
 ### 注意
 
 - `create` 默认在 vault 根目录创建，**必须显式设置 `path="Inbox/文件名.md"`**
