@@ -58,7 +58,7 @@ done
 FISH_COMP_DIR="${HOME}/.config/fish/completions"
 fish_installed=0
 
-if command -v fish &>/dev/null; then
+if [ -d "${HOME}/.config/fish" ]; then
   mkdir -p "$FISH_COMP_DIR"
   echo -e "${BOLD}安装 Fish completions 到 $FISH_COMP_DIR${RESET}"
   echo ""
