@@ -1,0 +1,293 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ─── 定位项目根目录 ───────────────────────────────────────────────
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+  SELF_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+  SELF="$(readlink "$SELF")"
+  [[ "$SELF" != /* ]] && SELF="$SELF_DIR/$SELF"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+SKILLS_DIR="$PROJECT_ROOT/skills"
+
+# ─── 颜色 ────────────────────────────────────────────────────────
+BOLD='\033[1m'
+DIM='\033[2m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+CYAN='\033[0;36m'
+RESET='\033[0m'
+
+# ─── 工具函数 ────────────────────────────────────────────────────
+die() { echo -e "${RED}错误：$1${RESET}" >&2; exit 1; }
+
+# 获取所有 skill 名称
+get_skills() {
+  local skills=()
+  for dir in "$SKILLS_DIR"/*/; do
+    [ -d "$dir" ] || continue
+    [ -f "$dir/SKILL.md" ] || continue
+    skills+=("$(basename "$dir")")
+  done
+  if [ ${#skills[@]} -gt 0 ]; then
+    echo "${skills[@]}"
+  fi
+}
+
+# 从 SKILL.md 提取 description
+get_skill_desc() {
+  local skill_md="$SKILLS_DIR/$1/SKILL.md"
+  [ -f "$skill_md" ] || return
+  sed -n '/^description:/{ s/^description: *//; p; q; }' "$skill_md" | cut -c1-60
+}
+
+# 检查 skill 是否存在
+assert_skill_exists() {
+  local skill="$1"
+  [ -d "$SKILLS_DIR/$skill" ] || die "skill '$skill' 不存在。使用 myskills list 查看可用的 skills。"
+  [ -f "$SKILLS_DIR/$skill/SKILL.md" ] || die "'$skill' 目录下缺少 SKILL.md"
+}
+
+# 解析目标参数，返回目标路径列表
+# 用法: resolve_targets targets_array flag1 [flag2 ...]
+resolve_targets() {
+  local -n _targets=$1
+  shift
+  _targets=()
+  for flag in "$@"; do
+    case "$flag" in
+      --agents)  _targets+=("$HOME/.agents/skills") ;;
+      --claude)  _targets+=("$HOME/.claude/skills") ;;
+      --local-agents)  _targets+=("./.agents/skills") ;;
+      --local-claude)  _targets+=("./.claude/skills") ;;
+      *) die "未知目标：$flag。使用 -h 查看帮助。" ;;
+    esac
+  done
+}
+
+# ─── list 命令 ───────────────────────────────────────────────────
+cmd_list() {
+  local skills=()
+  local raw
+  raw="$(get_skills)"
+  [ -n "$raw" ] && read -ra skills <<< "$raw"
+
+  if [ ${#skills[@]} -eq 0 ]; then
+    echo "没有找到任何 skill。"
+    return
+  fi
+
+  echo -e "${BOLD}可用的 Skills：${RESET}"
+  echo ""
+  for skill in "${skills[@]}"; do
+    local desc
+    desc="$(get_skill_desc "$skill")"
+    echo -e "  ${CYAN}$skill${RESET}  ${DIM}$desc${RESET}"
+  done
+  echo ""
+}
+
+# ─── link 命令 ───────────────────────────────────────────────────
+cmd_link() {
+  [ $# -ge 1 ] || die "缺少参数。用法：myskills link <skill> [目标 ...]"
+  local skill="$1"
+  shift
+  assert_skill_exists "$skill"
+
+  local src="$SKILLS_DIR/$skill"
+
+  # 默认链接到 --agents --claude
+  if [ $# -eq 0 ]; then
+    set -- --agents --claude
+  fi
+
+  local targets=()
+  resolve_targets targets "$@"
+
+  for t in "${targets[@]}"; do
+    local target="$t/$skill"
+    mkdir -p "$t"
+
+    if [ -L "$target" ]; then
+      echo -e "${YELLOW}已存在链接：$target → $(readlink "$target")${RESET}"
+      echo -e "  ${DIM}跳过（使用 myskills unlink 先移除）${RESET}"
+      continue
+    elif [ -d "$target" ]; then
+      echo -e "${YELLOW}目标已存在且不是软链接：$target${RESET}"
+      echo -e "  ${DIM}跳过（请手动处理）${RESET}"
+      continue
+    fi
+
+    ln -s "$src" "$target"
+    echo -e "${GREEN}已链接：$target → $src${RESET}"
+  done
+}
+
+# ─── unlink 命令 ─────────────────────────────────────────────────
+cmd_unlink() {
+  [ $# -ge 1 ] || die "缺少参数。用法：myskills unlink <skill> [目标 ...]"
+  local skill="$1"
+  shift
+
+  local search_targets=()
+
+  if [ $# -eq 0 ]; then
+    # 无目标参数时扫描所有位置
+    search_targets=(
+      "$HOME/.agents/skills"
+      "$HOME/.claude/skills"
+      "./.agents/skills"
+      "./.claude/skills"
+    )
+  else
+    resolve_targets search_targets "$@"
+  fi
+
+  local found=0
+  for t in "${search_targets[@]}"; do
+    local target="$t/$skill"
+    if [ -L "$target" ]; then
+      rm "$target"
+      echo -e "${GREEN}已移除链接：$target${RESET}"
+      found=1
+    fi
+  done
+
+  if [ "$found" -eq 0 ]; then
+    echo -e "${DIM}未找到 '$skill' 的软链接${RESET}"
+  fi
+}
+
+# ─── status 命令 ─────────────────────────────────────────────────
+cmd_status() {
+  local skills=()
+  local raw
+  raw="$(get_skills)"
+  [ -n "$raw" ] && read -ra skills <<< "$raw"
+
+  if [ ${#skills[@]} -eq 0 ]; then
+    echo "没有找到任何 skill。"
+    return
+  fi
+
+  local all_targets=(
+    "$HOME/.agents/skills"
+    "$HOME/.claude/skills"
+    "./.agents/skills"
+    "./.claude/skills"
+  )
+
+  echo -e "${BOLD}Skills 链接状态：${RESET}"
+  echo ""
+
+  for skill in "${skills[@]}"; do
+    echo -e "  ${CYAN}$skill${RESET}"
+    local has_link=0
+    for t in "${all_targets[@]}"; do
+      local target="$t/$skill"
+      if [ -L "$target" ]; then
+        echo -e "    ${GREEN}✓${RESET} $target → $(readlink "$target")"
+        has_link=1
+      fi
+    done
+    if [ "$has_link" -eq 0 ]; then
+      echo -e "    ${DIM}未链接${RESET}"
+    fi
+  done
+  echo ""
+}
+
+# ─── 帮助 ────────────────────────────────────────────────────────
+usage() {
+  echo -e "${BOLD}myskills${RESET} - 管理 AI Skills 的软链接
+
+${BOLD}用法：${RESET}
+  myskills <命令> [参数]
+
+${BOLD}命令：${RESET}
+  list            列出所有可用的 skills
+  link <skill>    将 skill 软链接到目标目录
+  unlink <skill>  移除 skill 的软链接
+  status          查看所有 skills 的链接状态
+
+${BOLD}选项：${RESET}
+  -h, --help      显示此帮助信息
+
+${BOLD}目标参数（link / unlink 可用，可多选）：${RESET}
+  --agents        ~/.agents/skills/
+  --claude        ~/.claude/skills/
+  --local-agents  ./.agents/skills/（当前目录）
+  --local-claude  ./.claude/skills/（当前目录）
+
+  不指定时，link 默认 --agents --claude；unlink 扫描所有位置。
+
+${BOLD}示例：${RESET}
+  myskills list
+  myskills link mosaic-notes                   # 链接到 ~/.agents/ 和 ~/.claude/
+  myskills link mosaic-notes --claude           # 只链接到 ~/.claude/
+  myskills link mosaic-notes --agents --local-claude
+  myskills unlink mosaic-notes
+  myskills status"
+}
+
+usage_link() {
+  echo -e "${BOLD}myskills link${RESET} - 将 skill 软链接到目标目录
+
+${BOLD}用法：${RESET}
+  myskills link <skill> [--agents] [--claude] [--local-agents] [--local-claude]
+
+${BOLD}说明：${RESET}
+  将指定 skill 软链接到目标目录。可指定多个目标。
+  不指定时默认链接到 --agents 和 --claude。
+
+${BOLD}示例：${RESET}
+  myskills link mosaic-notes
+  myskills link mosaic-notes --claude --local-agents"
+}
+
+usage_unlink() {
+  echo -e "${BOLD}myskills unlink${RESET} - 移除 skill 的软链接
+
+${BOLD}用法：${RESET}
+  myskills unlink <skill> [--agents] [--claude] [--local-agents] [--local-claude]
+
+${BOLD}说明：${RESET}
+  移除指定 skill 的软链接。可指定目标，不指定时扫描所有位置。
+
+${BOLD}示例：${RESET}
+  myskills unlink mosaic-notes
+  myskills unlink mosaic-notes --claude"
+}
+
+# ─── 主入口 ──────────────────────────────────────────────────────
+case "${1:-}" in
+  list)
+    shift
+    case "${1:-}" in -h|--help) usage; exit 0;; esac
+    cmd_list
+    ;;
+  link)
+    shift
+    case "${1:-}" in -h|--help) usage_link; exit 0;; esac
+    cmd_link "$@"
+    ;;
+  unlink)
+    shift
+    case "${1:-}" in -h|--help) usage_unlink; exit 0;; esac
+    cmd_unlink "$@"
+    ;;
+  status)
+    shift
+    case "${1:-}" in -h|--help) usage; exit 0;; esac
+    cmd_status
+    ;;
+  -h|--help|"")
+    usage
+    ;;
+  *)
+    die "未知命令：$1。使用 myskills -h 查看帮助。"
+    ;;
+esac
