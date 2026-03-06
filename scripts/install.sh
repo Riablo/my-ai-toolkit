@@ -38,7 +38,7 @@ for tool_dir in "$CLI_DIR"/*/; do
     existing="$(readlink "$target")"
     if [ "$existing" = "$tool_bin" ]; then
       echo -e "  ${DIM}$tool_name — 已安装，跳过${RESET}"
-      ((installed++))
+      installed=$((installed + 1))
       continue
     fi
     echo -e "  ${YELLOW}$tool_name — 已存在链接到 $existing，覆盖${RESET}"
@@ -51,7 +51,7 @@ for tool_dir in "$CLI_DIR"/*/; do
   chmod +x "$tool_bin"
   ln -s "$tool_bin" "$target"
   echo -e "  ${GREEN}$tool_name — 已安装${RESET}"
-  ((installed++))
+  installed=$((installed + 1))
 done
 
 # ─── 安装 Fish completions ──────────────────────────────────────
@@ -75,7 +75,7 @@ if [ -d "${HOME}/.config/fish" ]; then
       existing="$(readlink "$target")"
       if [ "$existing" = "$comp_file" ]; then
         echo -e "  ${DIM}${tool_name}.fish — 已安装，跳过${RESET}"
-        ((fish_installed++))
+        fish_installed=$((fish_installed + 1))
         continue
       fi
       rm "$target"
@@ -86,7 +86,7 @@ if [ -d "${HOME}/.config/fish" ]; then
 
     ln -s "$comp_file" "$target"
     echo -e "  ${GREEN}${tool_name}.fish — 已安装${RESET}"
-    ((fish_installed++))
+    fish_installed=$((fish_installed + 1))
   done
   echo ""
 fi
