@@ -38,9 +38,9 @@ uv run SKILL_DIR/scripts/fetch_omdb_info.py "<剧名>" --type series
 - 原剧名为非中文 → 脚本自动查询 Wikipedia 获取中文译名，填入 aliases
 - 原剧名为中文 → aliases 为空数组 `[]`
 
-**注意**：API key 读取顺序：(1) 环境变量 `OMDB_API_KEY` (2) `~/.config/mosaic-notes/.omdb_api_key` 文件。
+**注意**：API key 读取顺序：(1) 环境变量 `OMDB_API_KEY` (2) `~/.config/mosaic-notes/config.json` 中的 `omdb_api_key` 字段。
 
-## Step 3：创建笔记并设置属性
+## Step 3：创建笔记
 
 ### 文件名格式
 
@@ -48,39 +48,32 @@ uv run SKILL_DIR/scripts/fetch_omdb_info.py "<剧名>" --type series
 剧名 (年份).md
 ```
 
-### 3a. 创建笔记
+### 创建笔记文件
 
-```bash
-obsidian vault=VAULT_NAME create name="<filename_no_ext>" template="TPL - TV Series Logs" path="Inbox/<filename>" silent
+使用 create_from_template.py 创建（模板名 `TV Series Logs`），在 `Inbox/<filename>` 创建。然后用 Read + Edit 工具编辑 frontmatter，最终文件内容如下：
+
+```yaml
+---
+aliases:
+  - "<中文译名>"
+categories: TV Series Logs
+title: <剧名>
+creators:
+  - "[[主创1]]"
+  - "[[主创2]]"
+release_year: "[[Year <年份>|<年份>]]"
+poster: <海报URL>
+seasons: <总季数>
+rating: <评分>
+imdb: https://www.imdb.com/title/<imdb_id>/
+created: <YYYY-MM-DD>
+updated: <YYYY-MM-DD>
+---
 ```
-
-### 3b. 设置属性
-
-```bash
-obsidian vault=VAULT_NAME property:set file="<filename_no_ext>" name="title" value="<剧名>"
-obsidian vault=VAULT_NAME property:set file="<filename_no_ext>" name="creators" type=list value='["[[主创1]]", "[[主创2]]"]'
-obsidian vault=VAULT_NAME property:set file="<filename_no_ext>" name="release_year" value="[[Year <年份>|<年份>]]"
-obsidian vault=VAULT_NAME property:set file="<filename_no_ext>" name="poster" value="<海报URL>"
-obsidian vault=VAULT_NAME property:set file="<filename_no_ext>" name="seasons" type=number value="<总季数>"
-obsidian vault=VAULT_NAME property:set file="<filename_no_ext>" name="rating" value="<评分>"
-obsidian vault=VAULT_NAME property:set file="<filename_no_ext>" name="imdb" value="https://www.imdb.com/title/<imdb_id>/"
-obsidian vault=VAULT_NAME property:set file="<filename_no_ext>" name="created" value="<YYYY-MM-DD>"
-obsidian vault=VAULT_NAME property:set file="<filename_no_ext>" name="updated" value="<YYYY-MM-DD>"
-```
-
-**aliases 设置：**
-- 脚本返回的 `aliases` 数组不为空时（非中文原剧）：
-  ```bash
-  obsidian vault=VAULT_NAME property:set file="<filename_no_ext>" name="aliases" type=list value='["中文译名"]'
-  ```
-- 脚本返回的 `aliases` 数组为空时（中文原剧）：
-  ```bash
-  obsidian vault=VAULT_NAME property:set file="<filename_no_ext>" name="aliases" type=list value='[]'
-  ```
 
 ### 示例输出（英文原剧）
 
-以 "Breaking Bad" 为例，最终 frontmatter：
+以 "Breaking Bad" 为例：
 
 ```yaml
 ---

@@ -32,7 +32,7 @@ uv run SKILL_DIR/scripts/fetch_album_info.py "<专辑名>" "<艺术家>"
 
 **注意**：MusicBrainz 按信用名显示艺术家（如合唱团只显示团名，不展开成员）。若需要列出个人成员，用户需额外指定。
 
-## Step 3：创建笔记并设置属性
+## Step 3：创建笔记
 
 ### 文件名格式
 
@@ -43,27 +43,28 @@ uv run SKILL_DIR/scripts/fetch_album_info.py "<专辑名>" "<艺术家>"
 文件名清理规则（替换为下划线）：
 - 非法字符：`< > : " / \ | ? *` 以及控制字符
 
-### 3a. 创建笔记
+### 创建笔记文件
 
-```bash
-obsidian vault=VAULT_NAME create name="<filename_no_ext>" template="TPL - Music Logs" path="Inbox/<filename>" silent
-```
+使用 create_from_template.py 创建（模板名 `Music Logs`），在 `Inbox/<filename>` 创建。然后用 Read + Edit 工具编辑 frontmatter，最终文件内容如下：
 
-### 3b. 设置属性
-
-```bash
-obsidian vault=VAULT_NAME property:set file="<filename_no_ext>" name="album" value="<专辑名>"
-obsidian vault=VAULT_NAME property:set file="<filename_no_ext>" name="artists" type=list value='["[[艺术家1]]", "[[艺术家2]]"]'
-obsidian vault=VAULT_NAME property:set file="<filename_no_ext>" name="release_year" value="[[Year <年份>|<年份>]]"
-obsidian vault=VAULT_NAME property:set file="<filename_no_ext>" name="artwork" value="<封面URL>"
-obsidian vault=VAULT_NAME property:set file="<filename_no_ext>" name="rating" value="<评分>"
-obsidian vault=VAULT_NAME property:set file="<filename_no_ext>" name="created" value="<YYYY-MM-DD>"
-obsidian vault=VAULT_NAME property:set file="<filename_no_ext>" name="updated" value="<YYYY-MM-DD>"
+```yaml
+---
+categories: Music Logs
+album: <专辑名>
+artists:
+  - "[[艺术家1]]"
+  - "[[艺术家2]]"
+release_year: "[[Year <年份>|<年份>]]"
+artwork: <封面URL>
+rating: <评分>
+created: <YYYY-MM-DD>
+updated: <YYYY-MM-DD>
+---
 ```
 
 ### 示例输出
 
-以专辑 "An Evening With Silk Sonic" 为例，最终 frontmatter：
+以专辑 "An Evening With Silk Sonic" 为例：
 
 ```yaml
 ---

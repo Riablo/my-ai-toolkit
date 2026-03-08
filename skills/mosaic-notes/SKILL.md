@@ -1,11 +1,11 @@
 ---
 name: mosaic-notes
-description: 管理 Obsidian Mosaic 知识库的笔记，使用 Obsidian 官方 CLI 操作 vault。当用户要创建笔记、修改笔记属性、搜索笔记、记录专辑/电影/剧集、添加备忘、写 daily note、添加任务/待办/todo，或任何涉及 Mosaic 知识库内容管理的操作时使用此技能。即使用户只是随口提到"记一下"、"加个笔记"、"帮我记录"、"加个任务"、"提醒我"、"待办"，也应触发。包含记录类工作流：(1) Music Logs - 当用户提到记录专辑、听了什么音乐时，查阅 references/music-logs.md；(2) Movie Logs - 当用户提到记录电影、看了什么电影时，查阅 references/movie-logs.md；(3) TV Series Logs - 当用户提到记录剧集、追了什么剧时，查阅 references/tv-series-logs.md。电影和剧集使用 OMDB API，音乐使用 MusicBrainz API。当用户需要新增类别、修改模板、调整规则时，也使用此技能，参照"框架维护"章节。
+description: 管理 Obsidian Mosaic 知识库的笔记。当用户要创建笔记、修改笔记属性、搜索笔记、记录专辑/电影/剧集、添加备忘、写 daily note、添加任务/待办/todo，或任何涉及 Mosaic 知识库内容管理的操作时使用此技能。即使用户只是随口提到"记一下"、"加个笔记"、"帮我记录"、"加个任务"、"提醒我"、"待办"，也应触发。包含记录类工作流：(1) Music Logs - 当用户提到记录专辑、听了什么音乐时，查阅 references/music-logs.md；(2) Movie Logs - 当用户提到记录电影、看了什么电影时，查阅 references/movie-logs.md；(3) TV Series Logs - 当用户提到记录剧集、追了什么剧时，查阅 references/tv-series-logs.md。电影和剧集使用 OMDB API，音乐使用 MusicBrainz API。当用户需要新增类别、修改模板、调整规则时，也使用此技能，参照"框架维护"章节。
 ---
 
 # Mosaic Notes
 
-独立操作 Obsidian Mosaic 知识库的技能。所有规则和约定都包含在本文件中。
+独立操作 Obsidian Mosaic 知识库的技能。直接读写 vault 目录中的文件，不依赖 Obsidian CLI。
 
 ## 初始化
 
@@ -15,44 +15,88 @@ description: 管理 Obsidian Mosaic 知识库的笔记，使用 Obsidian 官方 
 cat ~/.config/mosaic-notes/config.json
 ```
 
-如果文件不存在，引导用户完成初始化：
+### 配置文件不存在
+
+引导用户完成初始化：
 
 1. 询问 vault 路径（Obsidian vault 在文件系统中的绝对路径）
-2. 询问 vault 名称（Obsidian 中的 vault 名称，用于 CLI 的 `vault=` 参数）
-3. 询问 OMDB API key（可选，用于 Movie/TV Series Logs；没有的话跳过）
-4. 创建配置文件：
+2. 询问 OMDB API key（可选，用于 Movie/TV Series Logs；没有可留空，后续需要时再配置）
+3. 询问是否使用 Headless 模式（无 Obsidian App 的主机设为 true，通过 ob sync 手动同步）
+4. 创建目录和配置文件：
+
+```bash
+mkdir -p ~/.config/mosaic-notes
+```
 
 ```json
 {
   "vault_path": "/Users/cz/Vaults/Mosaic",
-  "vault_name": "Mosaic",
-  "omdb_api_key": ""
+  "omdb_api_key": "",
+  "headless": false
 }
 ```
 
-配置就绪后，定义以下变量供后续使用：
+### 配置校验
+
+配置文件存在时，检查以下条件，任一不满足则提醒用户并协助修复：
+
+- **vault_path 必须存在且为目录** — 路径不存在时提醒用户确认路径是否正确，或在 headless 模式下先执行 `ob sync` 拉取
+- **vault_path 下应包含 Templates/ 目录** — 缺失时提醒用户 vault 结构可能不完整
+- **omdb_api_key** — 仅在执行 Movie/TV Series Logs 工作流时检查；缺失时提醒用户配置或设置 `OMDB_API_KEY` 环境变量
+- **headless 字段缺失** — 默认视为 false，并提醒用户补充配置
+
+### 配置就绪
+
+校验通过后，定义以下变量供后续使用：
 - **VAULT_PATH** = `vault_path`（文件读写的绝对路径）
-- **VAULT_NAME** = `vault_name`（obsidian CLI 的 `vault=` 参数）
 - **SKILL_DIR** = `~/.claude/skills/mosaic-notes`
+- **HEADLESS** = `headless`（是否为 Headless 模式）
 
-## Obsidian 官方 CLI
+## Headless 同步
 
-这是 Obsidian 1.12+ 官方提供的 CLI（非第三方 npm 包 `obsidian-cli`），需要 Obsidian 应用正在运行。
-
-所有命令必须加 `vault=VAULT_NAME` 参数：
+当 `headless = true` 时，每次操作前后都必须执行同步，且必须等待成功后才继续：
 
 ```bash
-obsidian vault=VAULT_NAME create name="标题" template="TPL - {类别}" path="Inbox/标题.md" silent
-obsidian vault=VAULT_NAME property:set name="key" value="val" file="标题"
-obsidian vault=VAULT_NAME property:set name="artists" type=list value='["[[A]]", "[[B]]"]' file="标题"
-obsidian vault=VAULT_NAME read file="标题"
-obsidian vault=VAULT_NAME search query="关键词"
-obsidian vault=VAULT_NAME append file="标题" content="内容"
-obsidian vault=VAULT_NAME daily:read
-obsidian vault=VAULT_NAME daily:append content="内容"
+ob sync --path VAULT_PATH   # 操作前：拉取最新
+# ... 执行文件操作 ...
+ob sync --path VAULT_PATH   # 操作后：推送变更
 ```
 
-直接读写文件时使用绝对路径：`VAULT_PATH/Library/xxx.md`、`VAULT_PATH/Inbox/xxx.md`
+当 `headless = false` 时，Obsidian App 会自动同步，无需额外操作。
+
+## 操作参考
+
+### 创建笔记
+
+```bash
+uv run SKILL_DIR/scripts/create_from_template.py --vault VAULT_PATH --template "{类别}" --name "标题" --path "Inbox/标题.md"
+```
+
+注意：**必须显式设置 path**，新笔记默认放 `Inbox/`，Daily Notes 例外放 `Library/`。
+
+### 设置属性
+
+使用 Read + Edit 工具直接修改文件的 YAML frontmatter。例如将 `key: ""` 改为 `key: val`。
+
+### 读取笔记
+
+使用 Read 工具读取 `VAULT_PATH/` 下对应文件。
+
+### 搜索笔记
+
+使用 Grep 工具在 `VAULT_PATH/` 下搜索文件内容，或用 Glob 工具按文件名查找。
+
+### 追加内容
+
+使用 Edit 工具在文件末尾或指定位置追加内容。
+
+### Daily Notes
+
+Daily Notes 文件路径为 `VAULT_PATH/Library/YYYY-MM-DD.md`，直接用 Read/Edit 工具操作。如文件不存在，用 create_from_template.py 创建：
+
+```bash
+uv run SKILL_DIR/scripts/create_from_template.py --vault VAULT_PATH --template "Daily Notes" --name "YYYY-MM-DD" --path "Library/YYYY-MM-DD.md"
+```
 
 ### 脚本执行
 
@@ -61,17 +105,8 @@ obsidian vault=VAULT_NAME daily:append content="内容"
 ```bash
 uv run SKILL_DIR/scripts/fetch_album_info.py "<专辑名>" "<艺术家>"
 uv run SKILL_DIR/scripts/fetch_omdb_info.py "<片名>" --type movie|series
+uv run SKILL_DIR/scripts/create_from_template.py --vault VAULT_PATH --template "{类别}" --name "标题" --path "路径"
 ```
-
-### 命令参考
-
-运行 `obsidian help` 查看所有可用命令和用法。遇到不确定的命令时，优先通过此命令获取最新信息。
-
-### 注意
-
-- `create` 默认在 vault 根目录创建，**必须显式设置 `path="Inbox/文件名.md"`**
-- Daily Notes 使用 `daily:*` 系列命令
-- wiki 链接值无需额外转义：`value="[[Year 2021|2021]]"`
 
 ## 核心规则
 
@@ -168,26 +203,21 @@ VAULT_PATH/
 
 ### 普通笔记
 
-```bash
-obsidian vault=VAULT_NAME create name="标题" template="TPL - {类别}" path="Inbox/标题.md" silent
-obsidian vault=VAULT_NAME property:set name="key" value="val" file="标题"
-```
+1. 使用 create_from_template.py 从对应类别模板创建
+2. 使用 Read + Edit 工具填写 frontmatter 属性
 
 ### 添加任务 / TODO
 
 当用户要添加任务、待办、todo 时，写入今天的 Daily Note 的 `## ✅ Tasks` 区块下：
 
-1. 读取今天的 Daily Note：
+1. 检查 `VAULT_PATH/Library/YYYY-MM-DD.md` 是否存在
+
+2. 如不存在，创建：
    ```bash
-   obsidian vault=VAULT_NAME daily:read
+   uv run SKILL_DIR/scripts/create_from_template.py --vault VAULT_PATH --template "Daily Notes" --name "YYYY-MM-DD" --path "Library/YYYY-MM-DD.md"
    ```
 
-2. 如果今天的 Daily Note 不存在，创建：
-   ```bash
-   obsidian vault=VAULT_NAME create name="YYYY-MM-DD" template="TPL - Daily Notes" path="Library/YYYY-MM-DD.md" silent
-   ```
-
-3. 在 `## ✅ Tasks` 下追加任务（使用 Edit 工具编辑 `VAULT_PATH/Library/YYYY-MM-DD.md`）：
+3. 在 `## ✅ Tasks` 下追加任务（使用 Edit 工具）：
    ```markdown
    - [ ] 任务内容
    ```
@@ -200,6 +230,10 @@ Daily Note 模板结构：
 ```
 
 任务插入在 `## ✅ Tasks` 和 `## 📝 Notes` 之间。
+
+### 完成任务
+
+将 `- [ ]` 改为 `- [x]`，使用 Edit 工具直接修改。
 
 ### 记录类笔记
 
