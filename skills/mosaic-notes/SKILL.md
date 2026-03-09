@@ -1,6 +1,6 @@
 ---
 name: mosaic-notes
-description: 管理 Obsidian Mosaic 知识库的笔记。当用户要创建笔记、修改笔记属性、搜索笔记、记录专辑/电影/剧集、添加备忘、写 daily note、添加任务/待办/todo，或任何涉及 Mosaic 知识库内容管理的操作时使用此技能。即使用户只是随口提到"记一下"、"加个笔记"、"帮我记录"、"加个任务"、"提醒我"、"待办"，也应触发。包含记录类工作流：(1) Music Logs - 当用户提到记录专辑、听了什么音乐时，查阅 references/music-logs.md；(2) Movie Logs - 当用户提到记录电影、看了什么电影时，查阅 references/movie-logs.md；(3) TV Series Logs - 当用户提到记录剧集、追了什么剧时，查阅 references/tv-series-logs.md。电影和剧集使用 OMDB API，音乐使用 MusicBrainz API。当用户需要新增类别、修改模板、调整规则时，也使用此技能，参照"框架维护"章节。
+description: 管理 Obsidian Mosaic 知识库的笔记。当用户要创建笔记、修改笔记属性、搜索笔记、记录专辑/电影/剧集、添加备忘、写 daily note、添加任务/待办/todo，或任何涉及 Mosaic 知识库内容管理的操作时使用此技能。即使用户只是随口提到"记一下"、"加个笔记"、"帮我记录"、"加个任务"、"提醒我"、"待办"，也应触发。当用户提到"任务转移"、"任务顺延"、"把昨天的任务移过来"、"rollover tasks"等，执行任务顺延工作流。包含记录类工作流：(1) Music Logs - 当用户提到记录专辑、听了什么音乐时，查阅 references/music-logs.md；(2) Movie Logs - 当用户提到记录电影、看了什么电影时，查阅 references/movie-logs.md；(3) TV Series Logs - 当用户提到记录剧集、追了什么剧时，查阅 references/tv-series-logs.md。电影和剧集使用 OMDB API，音乐使用 MusicBrainz API。当用户需要新增类别、修改模板、调整规则时，也使用此技能，参照"框架维护"章节。
 ---
 
 # Mosaic Notes
@@ -49,7 +49,7 @@ mkdir -p ~/.config/mosaic-notes
 
 校验通过后，定义以下变量供后续使用：
 - **VAULT_PATH** = `vault_path`（文件读写的绝对路径）
-- **SKILL_DIR** = `~/.claude/skills/mosaic-notes`
+- **SKILL_DIR** = 本 SKILL.md 文件所在目录的绝对路径（即包含此文件的 `mosaic-notes/` 目录）
 - **HEADLESS** = `headless`（是否为 Headless 模式）
 
 ## Headless 同步
@@ -234,6 +234,23 @@ Daily Note 模板结构：
 ### 完成任务
 
 将 `- [ ]` 改为 `- [x]`，使用 Edit 工具直接修改。
+
+### 任务顺延（Rollover Tasks）
+
+当用户提到"任务转移"、"任务顺延"、"把昨天的任务移过来"、"rollover" 等，执行：
+
+```bash
+uv run SKILL_DIR/scripts/rollover_tasks.py --vault VAULT_PATH
+```
+
+脚本行为：
+- 默认从**昨天**转移到**今天**，可通过 `--from` / `--to` 指定日期
+- 提取源文件 `## ✅ Tasks` 下所有**顶层未完成任务**（`- [ ]`）及其嵌套子任务树
+- 若顶层任务已完成但子任务中有未完成项，整块一起转移
+- **移动而非复制**：转移后从源文件的 Tasks 区块中删除对应任务
+- 追加到目标 Daily Note 的 `## ✅ Tasks` 区块末尾；若目标文件不存在则创建
+- 格式：`## ✅ Tasks` 与第一个任务之间有一个空行，任务项之间无空行
+- 已完成的顶层任务（所有子任务也均完成）保留在源文件，不转移
 
 ### 记录类笔记
 
