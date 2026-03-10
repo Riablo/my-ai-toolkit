@@ -41,6 +41,7 @@ Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/s
 | 工具 | 说明 |
 | --- | --- |
 | [myskills](cli/myskills/) | 管理 AI Skills 的软链接（list / link / unlink / status） |
+| [pingcode-cli](cli/pingcode-cli/) | PingCode 命令行工具（bugs 列表等） |
 
 ### myskills 用法
 
