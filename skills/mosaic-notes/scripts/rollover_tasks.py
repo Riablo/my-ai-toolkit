@@ -14,8 +14,40 @@ rollover_tasks.py - 把昨天 Daily Note 里未完成的任务移动到今天（
 import argparse
 import re
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+
+
+MOMENT_TO_STRFTIME = [
+    ("YYYY", "%Y"), ("YY", "%y"), ("MMMM", "%B"), ("MMM", "%b"),
+    ("MM", "%m"), ("DD", "%d"), ("dddd", "%A"), ("ddd", "%a"),
+    ("HH", "%H"), ("hh", "%I"), ("mm", "%M"), ("ss", "%S"),
+    ("A", "%p"), ("a", "%p"),
+]
+
+
+def moment_to_strftime(fmt: str) -> str:
+    result = fmt
+    for moment_fmt, py_fmt in MOMENT_TO_STRFTIME:
+        result = result.replace(moment_fmt, py_fmt)
+    return result
+
+
+def render_template(content: str, title: str) -> str:
+    now = datetime.now()
+    content = content.replace("{{title}}", title)
+
+    def replace_date(m):
+        fmt = m.group(1)
+        return now.strftime(moment_to_strftime(fmt)) if fmt else now.strftime("%Y-%m-%d")
+
+    def replace_time(m):
+        fmt = m.group(1)
+        return now.strftime(moment_to_strftime(fmt)) if fmt else now.strftime("%H:%M")
+
+    content = re.sub(r"\{\{date(?::([^}]+))?\}\}", replace_date, content)
+    content = re.sub(r"\{\{time(?::([^}]+))?\}\}", replace_time, content)
+    return content
 
 
 TASKS_HEADING = "## ✅ Tasks"
@@ -218,7 +250,13 @@ def main():
     else:
         print(f"目标文件不存在，创建：{dst_path}")
         dst_path.parent.mkdir(parents=True, exist_ok=True)
-        dst_lines = [f"{TASKS_HEADING}\n", "\n", f"{NOTES_HEADING}\n"]
+        template_path = vault / "Templates" / "TPL - Daily Notes.md"
+        if template_path.exists():
+            content = render_template(template_path.read_text(encoding="utf-8"), to_date.isoformat())
+            dst_path.write_text(content, encoding="utf-8")
+            dst_lines = content.splitlines(keepends=True)
+        else:
+            dst_lines = [f"{TASKS_HEADING}\n", "\n", f"{NOTES_HEADING}\n"]
 
     dst_result = insert_tasks_into_dst(dst_lines, move_blocks)
     dst_path.write_text("".join(dst_result), encoding="utf-8")
