@@ -44,6 +44,7 @@ Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/s
 | [myskills](cli/myskills/) | 管理 AI Skills 的软链接（list / link / unlink / status） |
 | [pingcode-cli](cli/pingcode-cli/) | PingCode 命令行工具（bugs 列表等） |
 | [qweather-cli](cli/qweather-cli/) | QWeather 命令行工具（实时天气 / 每日预报 / 逐小时预报） |
+| [jenkins-builder-cli](cli/jenkins-builder-cli/) | Jenkins 构建命令行工具（列出 jobs / 触发构建 / 改分支 / 日志 / 停止） |
 
 ### myskills 用法
 

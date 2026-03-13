@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+  SELF_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+  SELF="$(readlink "$SELF")"
+  [[ "$SELF" != /* ]] && SELF="$SELF_DIR/$SELF"
+done
+
+SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+exec uv run "$SCRIPT_DIR/main.py" "$@"
