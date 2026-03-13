@@ -1,0 +1,459 @@
+#!/usr/bin/env python3
+"""QWeather CLI."""
+
+from __future__ import annotations
+
+import argparse
+import gzip
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, NoReturn
+
+
+CONFIG_PATH = Path.home() / ".config" / "qweather-cli" / "config.json"
+DEFAULT_TIMEOUT = 10
+
+
+class CliError(Exception):
+    """User-facing CLI error."""
+
+
+@dataclass
+class LocationSelection:
+    location_param: str
+    query: dict[str, Any]
+    resolved_location: dict[str, Any] | None = None
+
+
+def eprint(message: str) -> None:
+    print(message, file=sys.stderr)
+
+
+def die(message: str) -> NoReturn:
+    raise CliError(message)
+
+
+def parse_coordinate(value: str) -> str:
+    try:
+        float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"非法坐标值: {value}") from exc
+    return value
+
+
+def parse_api_host(raw: str) -> str:
+    value = raw.strip()
+    if not value:
+        die("`api_host` 不能为空")
+
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme:
+        if not parsed.netloc:
+            die("`api_host` 格式不正确")
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path.rstrip('/')}"
+
+    return value.rstrip("/")
+
+
+def to_base_url(api_host: str) -> str:
+    if "://" in api_host:
+        return api_host.rstrip("/")
+    return f"https://{api_host.rstrip('/')}"
+
+
+def mask_api_key(api_key: str) -> str:
+    if len(api_key) <= 8:
+        return "*" * len(api_key)
+    return f"{api_key[:4]}...{api_key[-4:]}"
+
+
+def ensure_parent_dir(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def save_config(api_host: str, api_key: str) -> None:
+    ensure_parent_dir(CONFIG_PATH)
+    payload = {
+        "api_host": parse_api_host(api_host),
+        "api_key": api_key.strip(),
+    }
+    if not payload["api_key"]:
+        die("`api_key` 不能为空")
+
+    CONFIG_PATH.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(CONFIG_PATH, 0o600)
+
+
+def load_config() -> dict[str, str]:
+    env_host = os.environ.get("QWEATHER_API_HOST", "").strip()
+    env_key = os.environ.get("QWEATHER_API_KEY", "").strip()
+    if env_host or env_key:
+        if not env_host or not env_key:
+            die("环境变量 `QWEATHER_API_HOST` 和 `QWEATHER_API_KEY` 必须同时提供")
+    if env_host and env_key:
+        return {
+            "api_host": parse_api_host(env_host),
+            "api_key": env_key,
+        }
+
+    if not CONFIG_PATH.exists():
+        die(
+            "未找到配置文件，请先运行 `qweather-cli init --api-host <HOST> --api-key <KEY>`"
+        )
+
+    try:
+        config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise CliError(f"配置文件不是合法 JSON: {CONFIG_PATH}") from exc
+
+    api_host = str(config.get("api_host", "")).strip()
+    api_key = str(config.get("api_key", "")).strip()
+    if not api_host or not api_key:
+        die(f"配置文件缺少 `api_host` 或 `api_key`: {CONFIG_PATH}")
+
+    return {
+        "api_host": parse_api_host(api_host),
+        "api_key": api_key,
+    }
+
+
+def decode_response_body(body: bytes, headers: Any) -> bytes:
+    if headers.get("Content-Encoding") == "gzip":
+        return gzip.decompress(body)
+    return body
+
+
+def request_json(
+    config: dict[str, str],
+    path: str,
+    params: dict[str, Any],
+    timeout: int = DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    base_url = to_base_url(config["api_host"])
+    query = urllib.parse.urlencode(
+        {key: value for key, value in params.items() if value is not None}
+    )
+    url = f"{base_url}{path}"
+    if query:
+        url = f"{url}?{query}"
+
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip",
+            "User-Agent": "qweather-cli/1.0",
+            "X-QW-Api-Key": config["api_key"],
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = decode_response_body(resp.read(), resp.headers)
+    except urllib.error.HTTPError as exc:
+        body = decode_response_body(exc.read(), exc.headers)
+        message = body.decode("utf-8", errors="replace").strip()
+        try:
+            payload = json.loads(message)
+        except json.JSONDecodeError:
+            raise CliError(f"HTTP {exc.code}: {message or exc.reason}") from exc
+        raise CliError(
+            f"HTTP {exc.code}: {payload.get('code', 'unknown')} {payload.get('message', message)}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise CliError(f"请求失败: {exc.reason}") from exc
+
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise CliError("API 响应不是合法 JSON") from exc
+
+    code = payload.get("code")
+    if code and code != "200":
+        raise CliError(f"QWeather API 返回错误代码: {code}")
+    return payload
+
+
+def emit_json(payload: dict[str, Any]) -> None:
+    json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
+    sys.stdout.write("\n")
+
+
+def resolve_city_location(args: argparse.Namespace, config: dict[str, str]) -> LocationSelection:
+    params: dict[str, Any] = {
+        "location": args.city_name,
+        "adm": args.adm,
+        "range": args.lookup_range,
+        "number": args.number,
+        "lang": args.lang,
+    }
+    response = request_json(config, "/geo/v2/city/lookup", params)
+    locations = response.get("location") or []
+    if not locations:
+        die(f"未找到城市或地区: {args.city_name}")
+
+    selected_index = args.location_index - 1
+    if selected_index >= len(locations):
+        die(
+            f"`--location-index` 超出范围，GeoAPI 共返回 {len(locations)} 个结果"
+        )
+
+    selected = locations[selected_index]
+    if len(locations) > 1:
+        eprint(
+            f"注意: `{args.city_name}` 命中 {len(locations)} 个位置，默认使用第 {args.location_index} 个: "
+            f"{selected.get('name', '')} / {selected.get('adm1', '')} / {selected.get('country', '')}"
+        )
+
+    query: dict[str, Any] = {
+        "type": "city",
+        "city": args.city_name,
+        "location_index": args.location_index,
+    }
+    if args.adm:
+        query["adm"] = args.adm
+    if args.lookup_range:
+        query["range"] = args.lookup_range
+    if args.number != 10:
+        query["number"] = args.number
+
+    return LocationSelection(
+        location_param=selected["id"],
+        query=query,
+        resolved_location=selected,
+    )
+
+
+def resolve_location(args: argparse.Namespace, config: dict[str, str]) -> LocationSelection:
+    modes = 0
+    if args.city_name:
+        modes += 1
+    if args.location_id:
+        modes += 1
+    if args.lon is not None or args.lat is not None:
+        if args.lon is None or args.lat is None:
+            die("`--lon` 和 `--lat` 必须同时提供")
+        modes += 1
+
+    if modes != 1:
+        die("请提供且只提供一种定位方式: 城市名、`--location-id` 或 `--lon/--lat`")
+
+    if args.city_name:
+        return resolve_city_location(args, config)
+
+    if args.location_id:
+        return LocationSelection(
+            location_param=args.location_id,
+            query={
+                "type": "location-id",
+                "location_id": args.location_id,
+            },
+        )
+
+    return LocationSelection(
+        location_param=f"{args.lon},{args.lat}",
+        query={
+            "type": "coordinates",
+            "lon": args.lon,
+            "lat": args.lat,
+        },
+    )
+
+
+def build_output(
+    args: argparse.Namespace,
+    location: LocationSelection,
+    weather: dict[str, Any],
+) -> dict[str, Any]:
+    if args.raw:
+        return weather
+
+    payload: dict[str, Any] = {
+        "query": location.query,
+        "data": weather,
+    }
+    if location.resolved_location is not None:
+        payload["resolvedLocation"] = location.resolved_location
+    return payload
+
+
+def add_location_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "city",
+        nargs="?",
+        help="城市名或地区名。默认会先调用 GeoAPI 查到 LocationID，再请求天气接口。",
+    )
+    parser.add_argument("--city", dest="city_option", help="显式指定城市名")
+    parser.add_argument("--location-id", help="直接使用 QWeather LocationID")
+    parser.add_argument("--lon", type=parse_coordinate, help="经度")
+    parser.add_argument("--lat", type=parse_coordinate, help="纬度")
+    parser.add_argument("--adm", help="GeoAPI 查询时的上级行政区过滤条件")
+    parser.add_argument(
+        "--range",
+        dest="lookup_range",
+        help="GeoAPI 查询时的国家/地区范围，使用 ISO 3166 代码，如 `cn`",
+    )
+    parser.add_argument(
+        "--number",
+        type=int,
+        default=10,
+        help="GeoAPI 返回候选数量，1-20，默认 10",
+    )
+    parser.add_argument(
+        "--location-index",
+        type=int,
+        default=1,
+        help="GeoAPI 返回多条结果时选择第几个，默认 1",
+    )
+
+
+def add_common_weather_args(parser: argparse.ArgumentParser) -> None:
+    add_location_args(parser)
+    parser.add_argument("--lang", help="语言，如 `zh`、`en`")
+    parser.add_argument(
+        "--unit",
+        choices=("m", "i"),
+        help="单位系统：`m` 公制，`i` 英制",
+    )
+    parser.add_argument(
+        "--raw",
+        action="store_true",
+        help="直接输出 QWeather 原始 JSON，不包一层 query / resolvedLocation",
+    )
+
+
+def finalize_location_args(args: argparse.Namespace) -> None:
+    if args.number < 1 or args.number > 20:
+        die("`--number` 取值范围必须在 1 到 20 之间")
+    if args.location_index < 1:
+        die("`--location-index` 必须大于等于 1")
+
+    city = args.city_option or args.city
+    if args.city and args.city_option:
+        die("位置参数城市名和 `--city` 不能同时使用")
+    args.city_name = city
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    save_config(args.api_host, args.api_key)
+    print(f"配置已保存到 {CONFIG_PATH}")
+    return 0
+
+
+def cmd_config_show(_: argparse.Namespace) -> int:
+    config = load_config()
+    emit_json(
+        {
+            "configPath": str(CONFIG_PATH),
+            "apiHost": config["api_host"],
+            "apiKey": mask_api_key(config["api_key"]),
+        }
+    )
+    return 0
+
+
+def cmd_config_path(_: argparse.Namespace) -> int:
+    print(CONFIG_PATH)
+    return 0
+
+
+def request_weather(
+    args: argparse.Namespace,
+    path: str,
+) -> int:
+    finalize_location_args(args)
+    config = load_config()
+    location = resolve_location(args, config)
+    params = {
+        "location": location.location_param,
+        "lang": args.lang,
+        "unit": args.unit,
+    }
+    weather = request_json(config, path, params)
+    emit_json(build_output(args, location, weather))
+    return 0
+
+
+def cmd_now(args: argparse.Namespace) -> int:
+    return request_weather(args, "/v7/weather/now")
+
+
+def cmd_daily(args: argparse.Namespace) -> int:
+    return request_weather(args, f"/v7/weather/{args.days}d")
+
+
+def cmd_hourly(args: argparse.Namespace) -> int:
+    return request_weather(args, f"/v7/weather/{args.hours}h")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="qweather-cli",
+        description="QWeather 命令行工具：查询实时天气、每日预报和逐小时预报。",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    p_init = subparsers.add_parser("init", help="初始化 API Host 和 API Key")
+    p_init.add_argument("--api-host", required=True, help="QWeather API Host")
+    p_init.add_argument("--api-key", required=True, help="QWeather API Key")
+    p_init.set_defaults(func=cmd_init)
+
+    p_config = subparsers.add_parser("config", help="查看配置")
+    config_subparsers = p_config.add_subparsers(dest="config_command", required=True)
+
+    p_config_show = config_subparsers.add_parser("show", help="显示当前配置")
+    p_config_show.set_defaults(func=cmd_config_show)
+
+    p_config_path = config_subparsers.add_parser("path", help="输出配置文件路径")
+    p_config_path.set_defaults(func=cmd_config_path)
+
+    p_now = subparsers.add_parser("now", help="查询实时天气")
+    add_common_weather_args(p_now)
+    p_now.set_defaults(func=cmd_now)
+
+    p_daily = subparsers.add_parser("daily", help="查询每日天气预报")
+    add_common_weather_args(p_daily)
+    p_daily.add_argument(
+        "--days",
+        type=int,
+        choices=(3, 7, 10, 15, 30),
+        default=3,
+        help="预报天数，支持 3/7/10/15/30，默认 3",
+    )
+    p_daily.set_defaults(func=cmd_daily)
+
+    p_hourly = subparsers.add_parser("hourly", help="查询逐小时天气预报")
+    add_common_weather_args(p_hourly)
+    p_hourly.add_argument(
+        "--hours",
+        type=int,
+        choices=(24, 72, 168),
+        default=24,
+        help="预报小时数，支持 24/72/168，默认 24",
+    )
+    p_hourly.set_defaults(func=cmd_hourly)
+
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except CliError as exc:
+        eprint(f"错误: {exc}")
+        raise SystemExit(1)
