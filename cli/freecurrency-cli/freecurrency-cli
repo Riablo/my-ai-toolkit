@@ -1,0 +1,669 @@
+#!/usr/bin/env python3
+"""Freecurrency API CLI."""
+
+from __future__ import annotations
+
+import argparse
+import gzip
+import hashlib
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from typing import Any, NoReturn
+
+
+CONFIG_PATH = Path.home() / ".config" / "freecurrency-cli" / "config.json"
+CACHE_DIR = Path.home() / ".cache" / "freecurrency-cli"
+DEFAULT_BASE_URL = "https://api.freecurrencyapi.com"
+DEFAULT_TIMEOUT = 10
+CACHE_TTL_SECONDS = 30 * 60
+
+
+class CliError(Exception):
+    """User-facing CLI error."""
+
+
+@dataclass
+class CacheEntry:
+    payload: dict[str, Any]
+    cached_at: str
+    expires_at: str
+    cache_file: Path
+
+
+def eprint(message: str) -> None:
+    print(message, file=sys.stderr)
+
+
+def die(message: str) -> NoReturn:
+    raise CliError(message)
+
+
+def ensure_parent_dir(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def ensure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def isoformat_utc(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace(
+        "+00:00", "Z"
+    )
+
+
+def parse_timestamp(raw: str) -> datetime:
+    return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+
+
+def decode_response_body(body: bytes, headers: Any) -> bytes:
+    if headers.get("Content-Encoding") == "gzip":
+        return gzip.decompress(body)
+    return body
+
+
+def normalize_base_url(raw: str) -> str:
+    value = raw.strip()
+    if not value:
+        die("API 地址不能为空")
+
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme:
+        if not parsed.netloc:
+            die(f"API 地址格式不正确: {raw}")
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path.rstrip('/')}"
+
+    return f"https://{value.rstrip('/')}"
+
+
+def mask_api_key(api_key: str) -> str:
+    if len(api_key) <= 8:
+        return "*" * len(api_key)
+    return f"{api_key[:4]}...{api_key[-4:]}"
+
+
+def normalize_currency_code(value: str) -> str:
+    code = value.strip().upper()
+    if len(code) != 3 or not code.isalpha():
+        raise ValueError(value)
+    return code
+
+
+def parse_currency_code(value: str) -> str:
+    try:
+        return normalize_currency_code(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"非法货币代码: {value}") from exc
+
+
+def parse_amount(value: str) -> Decimal:
+    try:
+        amount = Decimal(value)
+    except InvalidOperation as exc:
+        raise argparse.ArgumentTypeError(f"非法金额: {value}") from exc
+    if not amount.is_finite():
+        raise argparse.ArgumentTypeError(f"非法金额: {value}")
+    return amount
+
+
+def format_decimal(value: Decimal) -> str:
+    if value == 0:
+        return "0"
+    text = format(value.normalize(), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def parse_currency_list(values: list[str] | None) -> list[str]:
+    if not values:
+        return []
+
+    currencies: set[str] = set()
+    for raw in values:
+        for token in raw.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            try:
+                currencies.add(normalize_currency_code(token))
+            except ValueError as exc:
+                raise CliError(f"非法货币代码: {token}") from exc
+    return sorted(currencies)
+
+
+def save_config(api_key: str) -> None:
+    value = api_key.strip()
+    if not value:
+        die("`api_key` 不能为空")
+
+    ensure_parent_dir(CONFIG_PATH)
+    CONFIG_PATH.write_text(
+        json.dumps({"api_key": value}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(CONFIG_PATH, 0o600)
+
+
+def load_config() -> dict[str, str]:
+    env_key = os.environ.get("FREECURRENCY_API_KEY", "").strip()
+    base_url = normalize_base_url(
+        os.environ.get("FREECURRENCY_API_BASE_URL", DEFAULT_BASE_URL)
+    )
+
+    if env_key:
+        return {
+            "api_key": env_key,
+            "base_url": base_url,
+        }
+
+    if not CONFIG_PATH.exists():
+        die(
+            "未找到配置文件，请先运行 `freecurrency-cli init --api-key <KEY>`，或设置 `FREECURRENCY_API_KEY`"
+        )
+
+    try:
+        config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise CliError(f"配置文件不是合法 JSON: {CONFIG_PATH}") from exc
+
+    api_key = str(config.get("api_key", "")).strip()
+    if not api_key:
+        die(f"配置文件缺少 `api_key`: {CONFIG_PATH}")
+
+    return {
+        "api_key": api_key,
+        "base_url": base_url,
+    }
+
+
+def emit_json(payload: dict[str, Any]) -> None:
+    json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
+    sys.stdout.write("\n")
+
+
+def normalize_latest_params(base_currency: str, currencies: list[str]) -> dict[str, str]:
+    params = {"base_currency": base_currency}
+    if currencies:
+        params["currencies"] = ",".join(sorted(set(currencies)))
+    return params
+
+
+def make_cache_key(path: str, params: dict[str, str]) -> str:
+    payload = json.dumps(
+        {"path": path, "params": params},
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def cache_file_for(path: str, params: dict[str, str]) -> Path:
+    safe_path = path.strip("/").replace("/", "-") or "root"
+    return CACHE_DIR / f"{safe_path}-{make_cache_key(path, params)}.json"
+
+
+def write_cache(path: str, params: dict[str, str], payload: dict[str, Any]) -> CacheEntry:
+    ensure_dir(CACHE_DIR)
+    cached_at = utc_now()
+    expires_at = cached_at + timedelta(seconds=CACHE_TTL_SECONDS)
+    cache_file = cache_file_for(path, params)
+    cache_payload = {
+        "path": path,
+        "params": params,
+        "cached_at": isoformat_utc(cached_at),
+        "expires_at": isoformat_utc(expires_at),
+        "payload": payload,
+    }
+    temp_file = cache_file.with_suffix(".tmp")
+    temp_file.write_text(
+        json.dumps(cache_payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    temp_file.replace(cache_file)
+    return CacheEntry(
+        payload=payload,
+        cached_at=cache_payload["cached_at"],
+        expires_at=cache_payload["expires_at"],
+        cache_file=cache_file,
+    )
+
+
+def load_cache(path: str, params: dict[str, str]) -> CacheEntry | None:
+    cache_file = cache_file_for(path, params)
+    if not cache_file.exists():
+        return None
+
+    try:
+        cache_payload = json.loads(cache_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        cache_file.unlink(missing_ok=True)
+        return None
+
+    try:
+        expires_at = parse_timestamp(str(cache_payload.get("expires_at", "")))
+    except ValueError:
+        cache_file.unlink(missing_ok=True)
+        return None
+
+    if utc_now() >= expires_at:
+        return None
+
+    payload = cache_payload.get("payload")
+    if not isinstance(payload, dict):
+        cache_file.unlink(missing_ok=True)
+        return None
+
+    return CacheEntry(
+        payload=payload,
+        cached_at=str(cache_payload.get("cached_at", "")),
+        expires_at=str(cache_payload.get("expires_at", "")),
+        cache_file=cache_file,
+    )
+
+
+def prune_expired_cache() -> None:
+    if not CACHE_DIR.exists():
+        return
+
+    for temp_file in CACHE_DIR.glob("*.tmp"):
+        temp_file.unlink(missing_ok=True)
+
+    now = utc_now()
+    for cache_file in CACHE_DIR.glob("*.json"):
+        try:
+            payload = json.loads(cache_file.read_text(encoding="utf-8"))
+            expires_at = parse_timestamp(str(payload.get("expires_at", "")))
+        except (json.JSONDecodeError, ValueError):
+            cache_file.unlink(missing_ok=True)
+            continue
+
+        if now >= expires_at:
+            cache_file.unlink(missing_ok=True)
+
+
+def count_cache_files() -> tuple[int, int]:
+    if not CACHE_DIR.exists():
+        return 0, 0
+
+    valid = 0
+    expired = 0
+    now = utc_now()
+    for cache_file in CACHE_DIR.glob("*.json"):
+        try:
+            payload = json.loads(cache_file.read_text(encoding="utf-8"))
+            expires_at = parse_timestamp(str(payload.get("expires_at", "")))
+        except (json.JSONDecodeError, ValueError):
+            expired += 1
+            continue
+
+        if now < expires_at:
+            valid += 1
+        else:
+            expired += 1
+    return valid, expired
+
+
+def clear_cache() -> int:
+    if not CACHE_DIR.exists():
+        return 0
+
+    removed = 0
+    for cache_file in CACHE_DIR.glob("*.json"):
+        cache_file.unlink(missing_ok=True)
+        removed += 1
+    for temp_file in CACHE_DIR.glob("*.tmp"):
+        temp_file.unlink(missing_ok=True)
+        removed += 1
+    return removed
+
+
+def request_json(
+    config: dict[str, str],
+    path: str,
+    params: dict[str, str],
+    timeout: int = DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    query = urllib.parse.urlencode(params)
+    url = f"{config['base_url']}{path}"
+    if query:
+        url = f"{url}?{query}"
+
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip",
+            "User-Agent": "freecurrency-cli/1.0",
+            "apikey": config["api_key"],
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = decode_response_body(resp.read(), resp.headers)
+    except urllib.error.HTTPError as exc:
+        body = decode_response_body(exc.read(), exc.headers)
+        text = body.decode("utf-8", errors="replace").strip()
+        try:
+            payload = json.loads(text) if text else {}
+        except json.JSONDecodeError:
+            raise CliError(f"HTTP {exc.code}: {text or exc.reason}") from exc
+
+        message = payload.get("message") or payload.get("error") or text or exc.reason
+        raise CliError(f"HTTP {exc.code}: {message}") from exc
+    except urllib.error.URLError as exc:
+        raise CliError(f"请求失败: {exc.reason}") from exc
+
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise CliError("API 响应不是合法 JSON") from exc
+
+    if not isinstance(payload, dict):
+        die("API 响应格式不正确")
+    return payload
+
+
+def extract_rate_map(payload: dict[str, Any], base_currency: str) -> dict[str, Decimal]:
+    raw_data = payload.get("data")
+    if not isinstance(raw_data, dict) or not raw_data:
+        die("API 响应中缺少 `data` 字段")
+
+    data: dict[str, Any]
+    first_value = next(iter(raw_data.values()))
+    if isinstance(first_value, dict):
+        if isinstance(raw_data.get(base_currency), dict):
+            data = raw_data[base_currency]
+        elif len(raw_data) == 1:
+            nested = first_value
+            if not isinstance(nested, dict):
+                die("API 响应中的汇率格式不正确")
+            data = nested
+        else:
+            die("API 响应中的汇率格式不正确")
+    else:
+        data = raw_data
+
+    rates: dict[str, Decimal] = {}
+    for raw_code, raw_value in data.items():
+        if not isinstance(raw_code, str):
+            continue
+        try:
+            code = normalize_currency_code(raw_code)
+            rate = Decimal(str(raw_value))
+        except (ValueError, InvalidOperation) as exc:
+            raise CliError(f"API 返回了非法汇率值: {raw_code}={raw_value}") from exc
+        rates[code] = rate
+
+    if not rates:
+        die("API 响应中没有可用汇率")
+    return rates
+
+
+def fetch_latest_payload(
+    config: dict[str, str],
+    base_currency: str,
+    currencies: list[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    prune_expired_cache()
+    params = normalize_latest_params(base_currency, currencies)
+    cache_entry = load_cache("/v1/latest", params)
+    if cache_entry is not None:
+        return cache_entry.payload, {
+            "source": "cache",
+            "cachePath": str(cache_entry.cache_file),
+            "cachedAt": cache_entry.cached_at,
+            "expiresAt": cache_entry.expires_at,
+            "ttlSeconds": CACHE_TTL_SECONDS,
+        }
+
+    payload = request_json(config, "/v1/latest", params)
+    cache_entry = write_cache("/v1/latest", params, payload)
+    return payload, {
+        "source": "api",
+        "cachePath": str(cache_entry.cache_file),
+        "cachedAt": cache_entry.cached_at,
+        "expiresAt": cache_entry.expires_at,
+        "ttlSeconds": CACHE_TTL_SECONDS,
+    }
+
+
+def build_latest_output(
+    base_currency: str,
+    payload: dict[str, Any],
+    cache_meta: dict[str, Any],
+) -> dict[str, Any]:
+    rates = extract_rate_map(payload, base_currency)
+    last_updated_at = None
+    meta = payload.get("meta")
+    if isinstance(meta, dict):
+        last_updated_at = meta.get("last_updated_at")
+
+    output_rates = {code: float(rate) for code, rate in sorted(rates.items())}
+    return {
+        "base": base_currency,
+        "rates": output_rates,
+        "meta": {
+            "lastUpdatedAt": last_updated_at,
+            **cache_meta,
+        },
+    }
+
+
+def finalize_convert_args(args: argparse.Namespace) -> None:
+    if args.to_currency_maybe is None:
+        try:
+            args.to_currency = normalize_currency_code(args.to_or_keyword)
+        except ValueError as exc:
+            raise CliError(f"非法货币代码: {args.to_or_keyword}") from exc
+        return
+
+    if args.to_or_keyword.lower() != "to":
+        die(
+            "兑换命令格式只支持 `freecurrency-cli convert <amount> <FROM> <TO>` "
+            "或 `freecurrency-cli convert <amount> <FROM> to <TO>`"
+        )
+    try:
+        args.to_currency = normalize_currency_code(args.to_currency_maybe)
+    except ValueError as exc:
+        raise CliError(f"非法货币代码: {args.to_currency_maybe}") from exc
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    save_config(args.api_key)
+    print(f"配置已保存到 {CONFIG_PATH}")
+    return 0
+
+
+def cmd_config_show(_: argparse.Namespace) -> int:
+    config = load_config()
+    emit_json(
+        {
+            "configPath": str(CONFIG_PATH),
+            "apiKey": mask_api_key(config["api_key"]),
+            "baseUrl": config["base_url"],
+        }
+    )
+    return 0
+
+
+def cmd_config_path(_: argparse.Namespace) -> int:
+    print(CONFIG_PATH)
+    return 0
+
+
+def cmd_convert(args: argparse.Namespace) -> int:
+    finalize_convert_args(args)
+
+    if args.from_currency == args.to_currency:
+        result = args.amount
+        if args.json:
+            emit_json(
+                {
+                    "amount": format_decimal(args.amount),
+                    "from": args.from_currency,
+                    "to": args.to_currency,
+                    "rate": "1",
+                    "result": format_decimal(result),
+                    "meta": {
+                        "source": "identity",
+                        "ttlSeconds": CACHE_TTL_SECONDS,
+                    },
+                }
+            )
+        else:
+            print(f"{format_decimal(result)} {args.to_currency}")
+        return 0
+
+    config = load_config()
+    payload, cache_meta = fetch_latest_payload(
+        config, args.from_currency, [args.to_currency]
+    )
+    rates = extract_rate_map(payload, args.from_currency)
+    rate = rates.get(args.to_currency)
+    if rate is None:
+        die(f"API 未返回 {args.to_currency} 的汇率")
+
+    result = args.amount * rate
+    if args.json:
+        emit_json(
+            {
+                "amount": format_decimal(args.amount),
+                "from": args.from_currency,
+                "to": args.to_currency,
+                "rate": format_decimal(rate),
+                "result": format_decimal(result),
+                "meta": {
+                    "lastUpdatedAt": (
+                        payload.get("meta", {}).get("last_updated_at")
+                        if isinstance(payload.get("meta"), dict)
+                        else None
+                    ),
+                    **cache_meta,
+                },
+            }
+        )
+    else:
+        print(f"{format_decimal(result)} {args.to_currency}")
+    return 0
+
+
+def cmd_latest(args: argparse.Namespace) -> int:
+    config = load_config()
+    currencies = parse_currency_list(args.currencies)
+    payload, cache_meta = fetch_latest_payload(config, args.base_currency, currencies)
+    emit_json(build_latest_output(args.base_currency, payload, cache_meta))
+    return 0
+
+
+def cmd_cache_info(_: argparse.Namespace) -> int:
+    valid, expired = count_cache_files()
+    emit_json(
+        {
+            "cacheDir": str(CACHE_DIR),
+            "ttlSeconds": CACHE_TTL_SECONDS,
+            "validFiles": valid,
+            "expiredFiles": expired,
+        }
+    )
+    return 0
+
+
+def cmd_cache_clear(_: argparse.Namespace) -> int:
+    removed = clear_cache()
+    print(f"已删除 {removed} 个缓存文件")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="freecurrency-cli",
+        description="FreeCurrencyAPI 命令行工具：汇率查询与换算。",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    p_init = subparsers.add_parser("init", help="初始化 API Key")
+    p_init.add_argument("--api-key", required=True, help="freecurrencyapi API Key")
+    p_init.set_defaults(func=cmd_init)
+
+    p_config = subparsers.add_parser("config", help="查看配置")
+    config_subparsers = p_config.add_subparsers(dest="config_command", required=True)
+
+    p_config_show = config_subparsers.add_parser("show", help="显示当前配置")
+    p_config_show.set_defaults(func=cmd_config_show)
+
+    p_config_path = config_subparsers.add_parser("path", help="输出配置文件路径")
+    p_config_path.set_defaults(func=cmd_config_path)
+
+    p_convert = subparsers.add_parser("convert", help="按指定货币对换算金额")
+    p_convert.add_argument("amount", type=parse_amount, help="要换算的金额")
+    p_convert.add_argument("from_currency", type=parse_currency_code, help="源货币")
+    p_convert.add_argument(
+        "to_or_keyword",
+        help="目标货币，或关键字 `to`",
+    )
+    p_convert.add_argument(
+        "to_currency_maybe",
+        nargs="?",
+        help="当第三个参数是 `to` 时，填写真正的目标货币",
+    )
+    p_convert.add_argument(
+        "--json",
+        action="store_true",
+        help="输出详细 JSON，而不是仅输出换算结果",
+    )
+    p_convert.set_defaults(func=cmd_convert)
+
+    p_latest = subparsers.add_parser("latest", help="查询最新汇率")
+    p_latest.add_argument(
+        "--base",
+        dest="base_currency",
+        type=parse_currency_code,
+        default="USD",
+        help="基准货币，默认 USD",
+    )
+    p_latest.add_argument(
+        "--currencies",
+        nargs="+",
+        help="目标货币列表，支持空格分隔或逗号分隔，如 `USD EUR` 或 `USD,EUR`",
+    )
+    p_latest.set_defaults(func=cmd_latest)
+
+    p_cache = subparsers.add_parser("cache", help="查看或清理缓存")
+    cache_subparsers = p_cache.add_subparsers(dest="cache_command", required=True)
+
+    p_cache_info = cache_subparsers.add_parser("info", help="显示缓存目录和统计信息")
+    p_cache_info.set_defaults(func=cmd_cache_info)
+
+    p_cache_clear = cache_subparsers.add_parser("clear", help="删除所有缓存")
+    p_cache_clear.set_defaults(func=cmd_cache_clear)
+
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except CliError as exc:
+        eprint(f"错误: {exc}")
+        raise SystemExit(1)
