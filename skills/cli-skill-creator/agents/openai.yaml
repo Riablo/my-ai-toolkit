@@ -1,0 +1,4 @@
+interface:
+  display_name: "CLI Skill Creator"
+  short_description: "为 cli/ 下的命令行工具创建 skill"
+  default_prompt: "为 cli/ 下的某个命令行工具创建或更新一个 skill；先查看 help、README、源码和初始化要求，再产出一个轻量、可安装的 SKILL.md。"
