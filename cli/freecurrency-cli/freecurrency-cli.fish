@@ -2,13 +2,14 @@
 
 complete -c freecurrency-cli -f
 
-complete -c freecurrency-cli -n "not __fish_seen_subcommand_from init config convert latest cache" -a init -d '初始化 API Key'
+complete -c freecurrency-cli -n "not __fish_seen_subcommand_from init config convert latest cache" -a init -d '初始化 App ID'
 complete -c freecurrency-cli -n "not __fish_seen_subcommand_from init config convert latest cache" -a config -d '查看配置'
 complete -c freecurrency-cli -n "not __fish_seen_subcommand_from init config convert latest cache" -a convert -d '按货币对换算金额'
 complete -c freecurrency-cli -n "not __fish_seen_subcommand_from init config convert latest cache" -a latest -d '查询最新汇率'
 complete -c freecurrency-cli -n "not __fish_seen_subcommand_from init config convert latest cache" -a cache -d '查看或清理缓存'
 
-complete -c freecurrency-cli -n "__fish_seen_subcommand_from init" -l api-key -r -d 'freecurrencyapi API Key'
+complete -c freecurrency-cli -n "__fish_seen_subcommand_from init" -l app-id -r -d 'Open Exchange Rates App ID'
+complete -c freecurrency-cli -n "__fish_seen_subcommand_from init" -l api-key -r -d '兼容旧参数名，等同于 --app-id'
 
 complete -c freecurrency-cli -n "__fish_seen_subcommand_from config; and not __fish_seen_subcommand_from show path" -a show -d '显示当前配置'
 complete -c freecurrency-cli -n "__fish_seen_subcommand_from config; and not __fish_seen_subcommand_from show path" -a path -d '输出配置文件路径'
