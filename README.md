@@ -35,6 +35,7 @@ Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/s
 | [cli-skill-creator](skills/cli-skill-creator/) | 为 `cli/` 下的命令行工具生成 AI skill（先探测 help/README/配置，再写轻量 skill） |
 | [freecurrency-cli](skills/freecurrency-cli/) | 使用 `freecurrency-cli` 查询汇率、做金额换算，并检查配置与缓存 |
 | [mosaic-notes](skills/mosaic-notes/) | 管理 Obsidian Mosaic 知识库的笔记 |
+| [qweather-cli](skills/qweather-cli/) | 使用 `qweather-cli` 查询实时天气、每日预报、逐小时预报，并检查 QWeather 配置 |
 
 ## cli/
 
