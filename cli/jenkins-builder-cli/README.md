@@ -3,7 +3,8 @@
 Jenkins 构建命令行工具。支持：
 
 - 实时列出当前账号可见且可构建的 jobs
-- 给 job 配置测试/正式环境、自然语言描述和别名
+- 给 job 配置测试/正式环境、自然语言描述和关键词
+- 将多个 jobs 组合为 group，一次触发构建或切换分支
 - 直接触发构建
 - 对经典 Git job 直接修改 Branch Specifier
 - 查看运行中的构建、查询构建状态、停止构建、查看 console output
@@ -74,12 +75,19 @@ jobs:
   "folder/test.frontend_build":
     env: test
     description: "测试服前端项目"
-    aliases: ["前端测试服", "frontend test"]
+    keywords: "前端测试服,frontend test"
 
   "folder/frontend_build":
     env: prod
     description: "正式服前端项目"
-    aliases: ["前端正式服", "frontend prod"]
+    keywords: "前端正式服,frontend prod"
+
+groups:
+  frontend-test:
+    jobs: ["folder/test.frontend_build", "folder/test.backend_build"]
+    env: test
+    description: "测试服前后端一起构建"
+    keywords: "前端后端测试服"
 ```
 
 ## 用法
@@ -102,14 +110,25 @@ jenkins-builder-cli jobs list --configured
 jenkins-builder-cli jobs set-meta "folder/test.frontend_build" \
   --env test \
   --desc "测试服前端项目" \
-  --alias "前端测试服" \
-  --alias "frontend test"
+  --keywords "前端测试服,frontend test"
 ```
 
 删除某个 job 的本地元数据：
 
 ```bash
 jenkins-builder-cli jobs rm-meta "folder/test.frontend_build"
+```
+
+管理 groups：
+
+```bash
+jenkins-builder-cli groups list
+jenkins-builder-cli groups set-meta frontend-test \
+  --jobs "folder/test.frontend_build" "folder/test.backend_build" \
+  --env test \
+  --desc "测试服前后端一起构建" \
+  --keywords "前端后端测试服"
+jenkins-builder-cli groups rm-meta frontend-test
 ```
 
 不带参数直接从列表中选并构建：
@@ -124,23 +143,24 @@ jenkins-builder-cli build
 jenkins-builder-cli build "folder/test.frontend_build"
 ```
 
-测试服先切分支再构建：
+按 group name 触发构建（组内所有 jobs 依次触发）：
 
 ```bash
-jenkins-builder-cli branch set "folder/test.frontend_build" feature/login
-jenkins-builder-cli build "folder/test.frontend_build"
+jenkins-builder-cli build frontend-test
 ```
 
-查看当前 Branch Specifier：
+修改 Branch Specifier（支持单个 job 或 group）：
 
 ```bash
-jenkins-builder-cli branch show "folder/test.frontend_build"
+jenkins-builder-cli set-branch "folder/test.frontend_build" feature/login
+jenkins-builder-cli set-branch frontend-test feature/login
 ```
 
-直接修改 Branch Specifier：
+先切分支再构建：
 
 ```bash
-jenkins-builder-cli branch set "folder/test.frontend_build" feature/login
+jenkins-builder-cli set-branch frontend-test feature/login
+jenkins-builder-cli build frontend-test
 ```
 
 查看运行中的构建：
@@ -186,13 +206,14 @@ jenkins-builder-cli runs status "folder/test.frontend_build#123" --json
 
 - `jobs list` 每次都会实时请求 Jenkins，不使用本地 jobs 缓存
 - `jobs list` 的 `BRANCH` 列显示 Jenkins 当前 job 配置里的真实 Branch Specifier；如果不是经典 Git job 或无法唯一解析，则显示 `-`
-- 所有命令行里的 `job_ref` 都只接受唯一的 Jenkins job name；`alias` 和 `description` 只作为 AI 侧元数据保留，不参与 CLI 参数解析
-- `build` 始终调用 Jenkins 的普通 `build` 接口；如果要发布特定分支，请先用 `branch set` 修改 Branch Specifier，再执行 `build`
+- 所有命令行里的 ref 都只接受唯一的 Jenkins job name 或 group name；`keywords` 和 `description` 只作为 AI 侧元数据保留，不参与 CLI 参数解析
+- `build` 和 `set-branch` 同时支持 job name 和 group name；传入 group name 时会对组内所有 jobs 依次执行
+- `build` 始终调用 Jenkins 的普通 `build` 接口；如果要发布特定分支，请先用 `set-branch` 修改 Branch Specifier，再执行 `build`
 - `runs status <run-id>` 适合做轮询；`status` 会统一返回这些值之一：`running`、`completed`、`failed`、`aborted`、`unstable`、`not_built`、`unknown`
 - `runs status` 同时保留 Jenkins 原始 `result` 字段；常见值有 `SUCCESS`、`FAILURE`、`ABORTED`、`UNSTABLE`、`NOT_BUILT`
-- `branch set` 传入分支名时会自动补成 `*/xxx`；如果你已经自己传了 `*/` 前缀，就保持原样
-- `branch set` 是持久修改，不会在构建后自动恢复
-- `branch set` 只支持经典 Git job；遇到 Pipeline / Multibranch / 多个 Branch Specifier 时会拒绝执行
+- `set-branch` 传入分支名时会自动补成 `*/xxx`；如果你已经自己传了 `*/` 前缀，就保持原样
+- `set-branch` 是持久修改，不会在构建后自动恢复
+- `set-branch` 只支持经典 Git job；遇到 Pipeline / Multibranch / 多个 Branch Specifier 时会拒绝执行
 
 ## 权限要求
 

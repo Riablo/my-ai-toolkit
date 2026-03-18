@@ -5,8 +5,9 @@ complete -c jenkins-builder-cli -f
 # top level
 complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'config' -d '管理本地配置'
 complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'jobs' -d '列出和管理 jobs'
+complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'groups' -d '管理 job 分组'
 complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'build' -d '触发构建'
-complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'branch' -d '查看或修改分支配置'
+complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'set-branch' -d '修改分支配置'
 complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'runs' -d '查看运行中的构建'
 complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'logs' -d '查看 console output'
 
@@ -25,18 +26,28 @@ complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs list' -l qu
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs list' -l json -d '输出 JSON'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs set-meta' -l env -a 'test prod' -d '环境'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs set-meta' -l desc -d '描述'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs set-meta' -l alias -d '别名'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs set-meta' -l keywords -d '关键词，逗号分隔'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs set-meta' -l json -d '输出 JSON'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs rm-meta' -l json -d '输出 JSON'
+
+# groups
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups' -a 'list set-meta rm-meta build' -d 'groups 子命令'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups list' -l json -d '输出 JSON'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups set-meta' -l jobs -d '包含的 job 名称'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups set-meta' -l env -a 'test prod' -d '环境'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups set-meta' -l desc -d '描述'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups set-meta' -l keywords -d '关键词，逗号分隔'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups set-meta' -l json -d '输出 JSON'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups rm-meta' -l json -d '输出 JSON'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups build' -l follow -d '等待构建完成'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups build' -l json -d '输出 JSON'
 
 # build
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from build' -l follow -d '等待构建完成'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from build' -l json -d '输出 JSON'
 
-# branch
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from branch' -a 'show set' -d 'branch 子命令'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from branch show' -l json -d '输出 JSON'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from branch set' -l json -d '输出 JSON'
+# set-branch
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from set-branch' -l json -d '输出 JSON'
 
 # runs
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from runs' -a 'list status stop' -d 'runs 子命令'

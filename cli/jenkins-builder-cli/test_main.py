@@ -51,7 +51,7 @@ class JenkinsBuilderCliTests(unittest.TestCase):
                 metadata={
                     "env": "test",
                     "description": "测试服前端项目",
-                    "aliases": ["前端测试服"],
+                    "keywords": "前端测试服",
                 },
             ),
             MODULE.JobEntry(
@@ -63,7 +63,7 @@ class JenkinsBuilderCliTests(unittest.TestCase):
                 metadata={
                     "env": "prod",
                     "description": "正式服前端项目",
-                    "aliases": ["前端正式服"],
+                    "keywords": "前端正式服",
                 },
             ),
         ]
