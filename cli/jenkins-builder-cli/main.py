@@ -327,19 +327,15 @@ def print_json(data: Any) -> None:
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
 
-def build_table(rows: list[list[str]], headers: list[str]) -> str:
-    widths = [len(header) for header in headers]
-    for row in rows:
-        for index, cell in enumerate(row):
-            widths[index] = max(widths[index], len(cell))
-
+def build_cards(rows: list[list[str]], headers: list[str]) -> str:
     lines = []
-    header_line = "  ".join(header.ljust(widths[index]) for index, header in enumerate(headers))
-    lines.append(header_line)
-    lines.append("  ".join("-" * widths[index] for index in range(len(headers))))
     for row in rows:
-        lines.append("  ".join(cell.ljust(widths[index]) for index, cell in enumerate(row)))
-    return "\n".join(lines)
+        lines.append(f"  \033[1m{row[0]}\033[0m")
+        for i in range(1, len(row)):
+            if row[i] and row[i] != "-":
+                lines.append(f"    {headers[i]}: {row[i]}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
 
 
 def require_tty() -> None:
@@ -726,7 +722,7 @@ def render_jobs(entries: list[JobEntry]) -> str:
         )
     if not rows:
         return "没有找到任何 job。"
-    return build_table(rows, ["JOB", "ENV", "BRANCH", "KEYWORDS", "DESCRIPTION"])
+    return build_cards(rows, ["JOB", "ENV", "BRANCH", "KEYWORDS", "DESCRIPTION"])
 
 
 def interactive_select_job(entries: list[JobEntry]) -> JobEntry:
@@ -752,14 +748,13 @@ def numbered_jobs(entries: list[JobEntry]) -> str:
     for index, entry in enumerate(entries, start=1):
         rows.append(
             [
-                str(index),
-                entry.full_name,
+                f"{index}. {entry.full_name}",
                 entry.env or "-",
                 entry.branch_display,
                 entry.description or "-",
             ]
         )
-    return build_table(rows, ["#", "JOB", "ENV", "BRANCH", "DESCRIPTION"])
+    return build_cards(rows, ["", "ENV", "BRANCH", "DESCRIPTION"])
 
 
 def parse_branch_specifier(xml_text: str) -> tuple[str, ET.ElementTree, ET.Element]:
@@ -1005,7 +1000,7 @@ def cmd_groups_list(args: argparse.Namespace) -> None:
             ", ".join(normalized.get("jobs") or []) or "-",
             normalized.get("description") or "-",
         ])
-    print(build_table(rows, ["GROUP", "ENV", "KEYWORDS", "JOBS", "DESCRIPTION"]))
+    print(build_cards(rows, ["GROUP", "ENV", "KEYWORDS", "JOBS", "DESCRIPTION"]))
 
 
 def cmd_groups_set_meta(args: argparse.Namespace) -> None:
@@ -1207,7 +1202,7 @@ def cmd_runs_list(args: argparse.Namespace) -> None:
         [run.run_id, run.node_name or "-", run.display_name or "-", run.url]
         for run in runs
     ]
-    print(build_table(rows, ["RUN ID", "NODE", "DISPLAY", "URL"]))
+    print(build_cards(rows, ["RUN ID", "NODE", "DISPLAY", "URL"]))
 
 
 def cmd_runs_stop(args: argparse.Namespace) -> None:

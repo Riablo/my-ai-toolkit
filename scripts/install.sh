@@ -37,7 +37,7 @@ for tool_dir in "$CLI_DIR"/*/; do
   if [ -L "$target" ]; then
     existing="$(readlink "$target")"
     if [ "$existing" = "$tool_bin" ]; then
-      echo -e "  ${DIM}$tool_name — 已安装，跳过${RESET}"
+      echo -e "  ${DIM}$tool_name — 已是最新${RESET}"
       installed=$((installed + 1))
       continue
     fi
@@ -74,7 +74,7 @@ if [ -d "${HOME}/.config/fish" ]; then
     if [ -L "$target" ]; then
       existing="$(readlink "$target")"
       if [ "$existing" = "$comp_file" ]; then
-        echo -e "  ${DIM}${tool_name}.fish — 已安装，跳过${RESET}"
+        echo -e "  ${DIM}${tool_name}.fish — 已是最新${RESET}"
         fish_installed=$((fish_installed + 1))
         continue
       fi
