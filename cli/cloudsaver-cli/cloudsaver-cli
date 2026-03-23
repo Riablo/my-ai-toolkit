@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+  SELF_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+  SELF="$(readlink "$SELF")"
+  [[ "$SELF" != /* ]] && SELF="$SELF_DIR/$SELF"
+done
+
+SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "错误：未找到 node，请先安装 Node.js 18+。" >&2
+  exit 1
+fi
+
+NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || true)"
+if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 18 ]; then
+  echo "错误：cloudsaver-cli 需要 Node.js 18+，当前版本为 $(node --version 2>/dev/null || echo unknown)。" >&2
+  exit 1
+fi
+
+exec node "$SCRIPT_DIR/cloudsaver-cli.cjs" "$@"

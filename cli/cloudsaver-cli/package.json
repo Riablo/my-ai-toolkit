@@ -1,0 +1,25 @@
+{
+  "name": "cloudsaver-cli",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CloudSaver CLI - 网盘资源搜索与115转存工具",
+  "scripts": {
+    "bundle": "esbuild src/index.js --bundle --platform=node --format=cjs --outfile=cloudsaver-cli.cjs"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "chalk": "^5.3.0",
+    "cheerio": "^1.0.0-rc.12",
+    "commander": "^12.0.0",
+    "https-proxy-agent": "^7.0.6",
+    "inquirer": "^9.2.12",
+    "table": "^6.8.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
