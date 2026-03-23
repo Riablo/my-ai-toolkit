@@ -1,0 +1,4 @@
+interface:
+  display_name: "CloudSaver CLI"
+  short_description: "用 cloudsaver-cli 搜索网盘资源并转存 115 分享"
+  default_prompt: "使用 cloudsaver-cli 搜索 Telegram 频道中的网盘资源、检查配置状态，或把 115 分享链接转存到网盘；先确认频道和 Cookie 是否已配置，再查看 help 选择合适的子命令。"
