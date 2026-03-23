@@ -44,7 +44,7 @@ Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/s
 | 工具 | 说明 |
 | --- | --- |
 | [freecurrency-cli](cli/freecurrency-cli/) | Open Exchange Rates 汇率工具（金额换算 / 最新汇率 / 本地缓存） |
-| [myskills](cli/myskills/) | 管理 AI Skills 的软链接（list / link / unlink / status） |
+| [myskills](cli/myskills/) | 管理 AI Skills 的链接、安装与卸载（list / link / install / unlink / uninstall / status） |
 | [pingcode-cli](cli/pingcode-cli/) | PingCode 命令行工具（bugs 列表等） |
 | [qweather-cli](cli/qweather-cli/) | QWeather 命令行工具（实时天气 / 每日预报 / 逐小时预报） |
 | [jenkins-builder-cli](cli/jenkins-builder-cli/) | Jenkins 构建命令行工具（列出 jobs / 触发构建 / 改分支 / 日志 / 停止） |
@@ -54,13 +54,16 @@ Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/s
 ```bash
 myskills list                                  # 列出可用 skills
 myskills link mosaic-notes                     # 链接到 ~/.agents/ 和 ~/.claude/（默认）
+myskills install mosaic-notes                  # 复制到 ~/.agents/ 和 ~/.claude/（默认，覆盖已有内容）
 myskills link mosaic-notes --claude             # 只链接到 ~/.claude/
+myskills install mosaic-notes --local-agents    # 覆盖安装到当前目录的 .agents
 myskills link mosaic-notes --agents --local-claude  # 多选目标
 myskills unlink mosaic-notes                   # 移除所有位置的软链接
-myskills status                                # 查看链接状态
+myskills uninstall mosaic-notes                # 移除所有位置已复制安装的目录
+myskills status                                # 查看状态（软链接或已安装）
 ```
 
-目标参数（`link` / `unlink` 可用，可多选）：
+目标参数（`link` / `install` / `unlink` / `uninstall` 可用，可多选）：
 
 | 参数 | 目录 |
 | --- | --- |

@@ -126,6 +126,36 @@ cmd_link() {
   done
 }
 
+# ─── install 命令 ────────────────────────────────────────────────
+cmd_install() {
+  [ $# -ge 1 ] || die "缺少参数。用法：myskills install <skill> [目标 ...]"
+  local skill="$1"
+  shift
+  assert_skill_exists "$skill"
+
+  local src="$SKILLS_DIR/$skill"
+
+  # 默认安装到 --agents --claude
+  if [ $# -eq 0 ]; then
+    set -- --agents --claude
+  fi
+
+  local targets=()
+  resolve_targets targets "$@"
+
+  for t in "${targets[@]}"; do
+    local target="$t/$skill"
+    mkdir -p "$t"
+
+    if [ -e "$target" ] || [ -L "$target" ]; then
+      rm -rf "$target"
+    fi
+
+    cp -R "$src" "$target"
+    echo -e "${GREEN}已安装：$target ← $src${RESET}"
+  done
+}
+
 # ─── unlink 命令 ─────────────────────────────────────────────────
 cmd_unlink() {
   [ $# -ge 1 ] || die "缺少参数。用法：myskills unlink <skill> [目标 ...]"
@@ -161,6 +191,41 @@ cmd_unlink() {
   fi
 }
 
+# ─── uninstall 命令 ──────────────────────────────────────────────
+cmd_uninstall() {
+  [ $# -ge 1 ] || die "缺少参数。用法：myskills uninstall <skill> [目标 ...]"
+  local skill="$1"
+  shift
+
+  local search_targets=()
+
+  if [ $# -eq 0 ]; then
+    # 无目标参数时扫描所有位置
+    search_targets=(
+      "$HOME/.agents/skills"
+      "$HOME/.claude/skills"
+      "./.agents/skills"
+      "./.claude/skills"
+    )
+  else
+    resolve_targets search_targets "$@"
+  fi
+
+  local found=0
+  for t in "${search_targets[@]}"; do
+    local target="$t/$skill"
+    if [ -d "$target" ] && [ ! -L "$target" ]; then
+      rm -rf "$target"
+      echo -e "${GREEN}已卸载：$target${RESET}"
+      found=1
+    fi
+  done
+
+  if [ "$found" -eq 0 ]; then
+    echo -e "${DIM}未找到 '$skill' 的已安装目录${RESET}"
+  fi
+}
+
 # ─── status 命令 ─────────────────────────────────────────────────
 cmd_status() {
   local skills=()
@@ -180,21 +245,24 @@ cmd_status() {
     "./.claude/skills"
   )
 
-  echo -e "${BOLD}Skills 链接状态：${RESET}"
+  echo -e "${BOLD}Skills 状态：${RESET}"
   echo ""
 
   for skill in "${skills[@]}"; do
     echo -e "  ${CYAN}$skill${RESET}"
-    local has_link=0
+    local has_entry=0
     for t in "${all_targets[@]}"; do
       local target="$t/$skill"
       if [ -L "$target" ]; then
         echo -e "    ${GREEN}✓${RESET} $target → $(readlink "$target")"
-        has_link=1
+        has_entry=1
+      elif [ -d "$target" ]; then
+        echo -e "    ${GREEN}✓${RESET} $target ${DIM}(已安装)${RESET}"
+        has_entry=1
       fi
     done
-    if [ "$has_link" -eq 0 ]; then
-      echo -e "    ${DIM}未链接${RESET}"
+    if [ "$has_entry" -eq 0 ]; then
+      echo -e "    ${DIM}未安装${RESET}"
     fi
   done
   echo ""
@@ -202,7 +270,7 @@ cmd_status() {
 
 # ─── 帮助 ────────────────────────────────────────────────────────
 usage() {
-  echo -e "${BOLD}myskills${RESET} - 管理 AI Skills 的软链接
+  echo -e "${BOLD}myskills${RESET} - 管理 AI Skills 的链接、安装与卸载
 
 ${BOLD}用法：${RESET}
   myskills <命令> [参数]
@@ -210,26 +278,31 @@ ${BOLD}用法：${RESET}
 ${BOLD}命令：${RESET}
   list            列出所有可用的 skills
   link <skill>    将 skill 软链接到目标目录
+  install <skill> 将 skill 复制到目标目录（覆盖已有内容）
   unlink <skill>  移除 skill 的软链接
-  status          查看所有 skills 的链接状态
+  uninstall <skill> 移除 skill 的已安装目录
+  status          查看所有 skills 的状态
 
 ${BOLD}选项：${RESET}
   -h, --help      显示此帮助信息
 
-${BOLD}目标参数（link / unlink 可用，可多选）：${RESET}
+${BOLD}目标参数（link / install / unlink / uninstall 可用，可多选）：${RESET}
   --agents        ~/.agents/skills/
   --claude        ~/.claude/skills/
   --local-agents  ./.agents/skills/（当前目录）
   --local-claude  ./.claude/skills/（当前目录）
 
-  不指定时，link 默认 --agents --claude；unlink 扫描所有位置。
+  不指定时，link / install 默认 --agents --claude；unlink / uninstall 扫描所有位置。
 
 ${BOLD}示例：${RESET}
   myskills list
   myskills link mosaic-notes                   # 链接到 ~/.agents/ 和 ~/.claude/
+  myskills install mosaic-notes                # 复制到 ~/.agents/ 和 ~/.claude/
   myskills link mosaic-notes --claude           # 只链接到 ~/.claude/
+  myskills install mosaic-notes --local-agents  # 覆盖安装到当前目录的 .agents
   myskills link mosaic-notes --agents --local-claude
   myskills unlink mosaic-notes
+  myskills uninstall mosaic-notes
   myskills status"
 }
 
@@ -248,6 +321,22 @@ ${BOLD}示例：${RESET}
   myskills link mosaic-notes --claude --local-agents"
 }
 
+usage_install() {
+  echo -e "${BOLD}myskills install${RESET} - 将 skill 复制到目标目录
+
+${BOLD}用法：${RESET}
+  myskills install <skill> [--agents] [--claude] [--local-agents] [--local-claude]
+
+${BOLD}说明：${RESET}
+  将指定 skill 复制到目标目录。可指定多个目标。
+  目标已存在时会直接覆盖。
+  不指定时默认安装到 --agents 和 --claude。
+
+${BOLD}示例：${RESET}
+  myskills install mosaic-notes
+  myskills install mosaic-notes --claude --local-agents"
+}
+
 usage_unlink() {
   echo -e "${BOLD}myskills unlink${RESET} - 移除 skill 的软链接
 
@@ -262,6 +351,22 @@ ${BOLD}示例：${RESET}
   myskills unlink mosaic-notes --claude"
 }
 
+usage_uninstall() {
+  echo -e "${BOLD}myskills uninstall${RESET} - 移除 skill 的已安装目录
+
+${BOLD}用法：${RESET}
+  myskills uninstall <skill> [--agents] [--claude] [--local-agents] [--local-claude]
+
+${BOLD}说明：${RESET}
+  移除通过 install 复制到目标目录的 skill。
+  可指定目标，不指定时扫描所有位置。
+  仅删除普通目录，不会移除软链接。
+
+${BOLD}示例：${RESET}
+  myskills uninstall mosaic-notes
+  myskills uninstall mosaic-notes --local-agents"
+}
+
 # ─── 主入口 ──────────────────────────────────────────────────────
 case "${1:-}" in
   list)
@@ -274,10 +379,20 @@ case "${1:-}" in
     case "${1:-}" in -h|--help) usage_link; exit 0;; esac
     cmd_link "$@"
     ;;
+  install)
+    shift
+    case "${1:-}" in -h|--help) usage_install; exit 0;; esac
+    cmd_install "$@"
+    ;;
   unlink)
     shift
     case "${1:-}" in -h|--help) usage_unlink; exit 0;; esac
     cmd_unlink "$@"
+    ;;
+  uninstall)
+    shift
+    case "${1:-}" in -h|--help) usage_uninstall; exit 0;; esac
+    cmd_uninstall "$@"
     ;;
   status)
     shift
