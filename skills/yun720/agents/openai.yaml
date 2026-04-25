@@ -1,0 +1,4 @@
+interface:
+  display_name: "yun720"
+  short_description: "用 yun720 CLI 上传全景素材并创建 720 云漫游作品"
+  default_prompt: "使用 yun720 CLI 管理 720 云全景素材和漫游作品；先运行 yun720 -h 和相关子命令 help 确认参数，再检查配置、上传素材、查询状态或创建作品。若用户要求生成图片作为素材，先用 gpt-image-2 系列模型生成 2:1 equirectangular 360° panorama，再执行 yun720。"
