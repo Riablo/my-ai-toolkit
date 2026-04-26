@@ -35,7 +35,7 @@ Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/s
 | [cli-skill-creator](skills/cli-skill-creator/) | 为 `cli/` 下的命令行工具生成 AI skill（先探测 help/README/配置，再写轻量 skill） |
 | [cloudsaver-cli](skills/cloudsaver-cli/) | 使用 `cloudsaver-cli` 搜索网盘资源、检查配置并转存 115 分享链接 |
 | [freecurrency-cli](skills/freecurrency-cli/) | 使用 `freecurrency-cli` 查询汇率、做金额换算，并检查配置与缓存 |
-| [image-prompt-tester](skills/image-prompt-tester/) | 生图测试：随机改写图片提示词或扩展场景描述，生成测试图并保存图片与提示词到 `~/Downloads` |
+| [image-prompt-tester](skills/image-prompt-tester/) | 生图测试：按指定方向测试图片提示词，或从参考图提取风格生成占位符模板，并行出图后保存到 `~/Downloads` |
 | [mosaic-notes](skills/mosaic-notes/) | 管理 Obsidian Mosaic 知识库的笔记 |
 | [qweather-cli](skills/qweather-cli/) | 使用 `qweather-cli` 查询实时天气、每日预报、逐小时预报，并检查 QWeather 配置 |
 | [yun720](skills/yun720/) | 使用 `yun720` 上传全景素材、查询制作状态、创建 720 云漫游作品；支持先生成 2:1 全景图再创建作品 |

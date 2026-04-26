@@ -1,4 +1,4 @@
 interface:
   display_name: "Image Prompt Tester"
-  short_description: "随机改写图片提示词并生成测试图"
-  default_prompt: "执行生图测试：把用户给出的图片提示词或场景描述改写成若干变体，最终用于生图的提示词必须统一写成简体中文，再调用图片生成工具生成图片，保存图片和最终提示词到 ~/Downloads 的新建文件夹；若用户希望聊天不阻塞，优先使用 /background 独立后台会话；否则可用子代理执行。"
+  short_description: "测试生图提示词或参考图风格并并行出图"
+  default_prompt: "Use $image-prompt-tester to test this image prompt or reference image style in 3 parallel versions, ask for test directions if I have not specified them, and save images plus prompts to ~/Downloads."
