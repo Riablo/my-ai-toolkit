@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sprite Sheet"
+  short_description: "Create looping sprite sheets and videos"
+  default_prompt: "Use $sprite-sheet to generate a 4x4 looping animation sprite sheet and export a 1-second MP4 video."

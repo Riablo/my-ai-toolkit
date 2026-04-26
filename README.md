@@ -38,6 +38,7 @@ Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/s
 | [image-prompt-tester](skills/image-prompt-tester/) | 生图测试：按指定方向测试图片提示词，或从参考图提取风格生成占位符模板，并行出图后保存到 `~/Downloads` |
 | [mosaic-notes](skills/mosaic-notes/) | 管理 Obsidian Mosaic 知识库的笔记 |
 | [qweather-cli](skills/qweather-cli/) | 使用 `qweather-cli` 查询实时天气、每日预报、逐小时预报，并检查 QWeather 配置 |
+| [sprite-sheet](skills/sprite-sheet/) | 生成 4x4 循环动画 sprite sheet 提示词，并逐帧抠掉 `#ff00ff` 背景后默认导出 1 秒 MP4，可选透明视频/GIF/竖排 PNG |
 | [yun720](skills/yun720/) | 使用 `yun720` 上传全景素材、查询制作状态、创建 720 云漫游作品；支持先生成 2:1 全景图再创建作品 |
 
 ## cli/
