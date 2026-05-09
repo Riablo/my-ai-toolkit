@@ -1,0 +1,4 @@
+interface:
+  display_name: "My Feishu"
+  short_description: "只向白名单群发送飞书群消息，并处理登录与权限排障"
+  default_prompt: "Use $my-feishu to send a Feishu group message only to an approved whitelist chat, and troubleshoot login or permission failures when needed."
