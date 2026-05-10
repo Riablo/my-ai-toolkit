@@ -40,6 +40,7 @@ Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/s
 | [mosaic-notes](skills/mosaic-notes/) | 管理 Obsidian Mosaic 知识库的笔记 |
 | [my-feishu](skills/my-feishu/) | 使用 `lark-cli` 向白名单飞书群发送消息，并在失败时排查登录、身份与权限问题 |
 | [qweather-cli](skills/qweather-cli/) | 使用 `qweather-cli` 查询实时天气、每日预报、逐小时预报，并检查 QWeather 配置 |
+| [skill-retrospective](skills/skill-retrospective/) | 在创建、更新、重构或 review skill 时自动做反思检查，重点检查 description、README 化正文、gotcha、边界与渐进加载 |
 | [testpage-cli](skills/testpage-cli/) | 使用 `testpage-cli` 发布本地 HTML 目录到测试服务器对应的 Git 项目，并返回可访问 URL |
 | [yun720](skills/yun720/) | 使用 `yun720` 上传全景素材、查询制作状态、创建 720 云漫游作品；支持先生成 2:1 全景图再创建作品 |
 
