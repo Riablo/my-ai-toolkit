@@ -43,6 +43,14 @@ testpage-cli init \
   --base-url https://test.720yun.com/html_test/
 ```
 
+也可以顺手配置一个默认子目录：
+
+```bash
+testpage-cli init \
+  --project-root /Users/cz/Work/html_test \
+  --default-subdir chenzheng
+```
+
 配置文件位置：
 
 ```bash
@@ -60,11 +68,12 @@ testpage-cli config path
 ```text
 project_root=/Users/cz/Work/html_test
 base_url=https://test.720yun.com/html_test/
+default_subdir=chenzheng
 ```
 
 ## 用法
 
-默认使用源目录名作为发布目录名：
+如果配置了 `default_subdir`，默认会发布到这个子目录下，并使用源目录名作为最终目录名：
 
 ```bash
 testpage-cli push ./why-html-over-markdown
@@ -73,7 +82,7 @@ testpage-cli push ./why-html-over-markdown
 返回：
 
 ```text
-https://test.720yun.com/html_test/why-html-over-markdown/
+https://test.720yun.com/html_test/chenzheng/why-html-over-markdown/
 ```
 
 发布时重命名：
@@ -94,10 +103,24 @@ testpage-cli push ./dist --subdir chenzheng --name why-html-over-markdown
 https://test.720yun.com/html_test/chenzheng/why-html-over-markdown/
 ```
 
+忽略默认子目录，直接发到根目录：
+
+```bash
+testpage-cli push ./dist --root --name T2Vision-demo
+```
+
+返回：
+
+```text
+https://test.720yun.com/html_test/T2Vision-demo/
+```
+
 ## 行为说明
 
 - `push` 只接受目录作为输入，目录里至少要有一个 `.html` 或 `.htm` 文件
 - `--subdir` 必须是相对路径，不能包含 `..`
+- `default_subdir` 和 `--subdir` 使用同样的路径规则
+- `--root` 和 `--subdir` 互斥；优先级为 `--root` > `--subdir` > `default_subdir` > 根目录
 - `--name` 是最终目录名，不能包含 `/`
 - 目标目录已存在时，会先整体删除再复制，避免旧资源残留
 - 发布前会检查 `project_root` 是否是 Git 仓库，且工作区必须是干净的
