@@ -213,6 +213,13 @@ def load_config() -> dict[str, str]:
     }
 
 
+def config_source() -> str:
+    env_app_id = os.environ.get("OPENEXCHANGERATES_APP_ID", "").strip()
+    if env_app_id:
+        return "environment"
+    return "file"
+
+
 def emit_json(payload: dict[str, Any]) -> None:
     json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
@@ -545,6 +552,22 @@ def cmd_config_path(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_config_check(_: argparse.Namespace) -> int:
+    config = load_config()
+    emit_json(
+        {
+            "status": "ok",
+            "source": config_source(),
+            "configPath": str(CONFIG_PATH),
+            "cacheDir": str(CACHE_DIR),
+            "provider": config["provider"],
+            "appId": mask_secret(config["app_id"]),
+            "baseUrl": config["base_url"],
+        }
+    )
+    return 0
+
+
 def cmd_convert(args: argparse.Namespace) -> int:
     finalize_convert_args(args)
 
@@ -651,6 +674,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_config_path = config_subparsers.add_parser("path", help="输出配置文件路径")
     p_config_path.set_defaults(func=cmd_config_path)
+
+    p_config_check = config_subparsers.add_parser("check", help="检查配置是否可用")
+    p_config_check.set_defaults(func=cmd_config_check)
 
     p_convert = subparsers.add_parser("convert", help="按指定货币对换算金额")
     p_convert.add_argument("amount", type=parse_amount, help="要换算的金额")

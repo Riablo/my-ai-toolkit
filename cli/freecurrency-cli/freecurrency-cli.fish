@@ -11,8 +11,9 @@ complete -c freecurrency-cli -n "not __fish_seen_subcommand_from init config con
 complete -c freecurrency-cli -n "__fish_seen_subcommand_from init" -l app-id -r -d 'Open Exchange Rates App ID'
 complete -c freecurrency-cli -n "__fish_seen_subcommand_from init" -l api-key -r -d '兼容旧参数名，等同于 --app-id'
 
-complete -c freecurrency-cli -n "__fish_seen_subcommand_from config; and not __fish_seen_subcommand_from show path" -a show -d '显示当前配置'
-complete -c freecurrency-cli -n "__fish_seen_subcommand_from config; and not __fish_seen_subcommand_from show path" -a path -d '输出配置文件路径'
+complete -c freecurrency-cli -n "__fish_seen_subcommand_from config; and not __fish_seen_subcommand_from show path check" -a show -d '显示当前配置'
+complete -c freecurrency-cli -n "__fish_seen_subcommand_from config; and not __fish_seen_subcommand_from show path check" -a path -d '输出配置文件路径'
+complete -c freecurrency-cli -n "__fish_seen_subcommand_from config; and not __fish_seen_subcommand_from show path check" -a check -d '检查配置是否可用'
 
 complete -c freecurrency-cli -n "__fish_seen_subcommand_from convert" -l json -d '输出详细 JSON'
 

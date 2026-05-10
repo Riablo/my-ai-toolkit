@@ -63,7 +63,7 @@ complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'runs' -d '查看�
 complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'logs' -d '查看 console output'
 
 # config
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from config' -a 'init show edit path' -d 'config 子命令'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from config' -a 'init show edit path check' -d 'config 子命令'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from config init' -l url -d 'Jenkins URL'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from config init' -l username -d '用户名'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from config init' -l token -d 'API token'

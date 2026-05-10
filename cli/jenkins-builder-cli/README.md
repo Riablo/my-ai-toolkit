@@ -50,6 +50,7 @@ jenkins-builder-cli config init \
 
 ```bash
 jenkins-builder-cli config path
+jenkins-builder-cli config check
 ```
 
 默认会写到：

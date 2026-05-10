@@ -51,6 +51,7 @@ chmod +x ~/.local/bin/cloudsaver-cli
 ```bash
 cloudsaver-cli config --add-channel
 cloudsaver-cli config --show
+cloudsaver-cli config --check
 ```
 
 ### 设置 115 Cookie

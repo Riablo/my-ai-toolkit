@@ -16,3 +16,4 @@ complete -c cloudsaver-cli -n "__fish_seen_subcommand_from config" -l add-channe
 complete -c cloudsaver-cli -n "__fish_seen_subcommand_from config" -l remove-channel -d '删除 Telegram 搜索频道'
 complete -c cloudsaver-cli -n "__fish_seen_subcommand_from config" -l set-proxy -d '设置 HTTP 代理'
 complete -c cloudsaver-cli -n "__fish_seen_subcommand_from config" -l show -d '显示当前配置'
+complete -c cloudsaver-cli -n "__fish_seen_subcommand_from config" -l check -d '检查当前配置是否可用'

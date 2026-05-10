@@ -5,7 +5,7 @@ description: 使用 `cloudsaver-cli` 搜索 Telegram 频道里的网盘资源，
 
 # CloudSaver CLI
 
-使用 `cloudsaver-cli` 完成资源搜索和 115 转存。先确认配置，再查看帮助选择子命令；不要凭印象猜参数。
+使用 `cloudsaver-cli` 完成资源搜索和 115 转存。默认直接执行搜索或转存；只有用户明确要排查配置，或执行因配置问题失败时，再使用 `config` 相关命令。
 
 ## CLI 定位
 
@@ -21,14 +21,15 @@ description: 使用 `cloudsaver-cli` 搜索 Telegram 频道里的网盘资源，
 
 ## 初始化
 
-每次执行前先确认配置就绪：
+首次使用时需要初始化：
 
 - 主配置文件：`~/.config/cloudsaver-cli/config.json`
 - 兼容旧配置：`~/.config/cloudsaver/config.json`、`~/.config/cloudsaver/local.json`
 - 可选代理环境变量：`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY`
 - Cookie 初始化：`cloudsaver-cli config --set-cookie`
 - 搜索频道初始化：`cloudsaver-cli config --add-channel`
-- 配置检查：`cloudsaver-cli config --show`
+- 配置查看：`cloudsaver-cli config --show`
+- 配置检查：`cloudsaver-cli config --check`
 
 若用户还没初始化，优先引导他：
 
@@ -37,23 +38,19 @@ cloudsaver-cli config --add-channel
 cloudsaver-cli config --set-cookie
 ```
 
-如果只是想确认当前 CLI 读到的配置，优先运行：
+如果只是想确认当前 CLI 读到的配置，运行：
 
 ```bash
 cloudsaver-cli config --show
 ```
 
-## 配置校验
+需要快速检查当前配置是否可用时，运行：
 
-每次执行真实搜索或转存前都要校验，不能静默跳过：
+```bash
+cloudsaver-cli config --check
+```
 
-1. 先确认 `node` 18+ 可用，且 `cloudsaver-cli -h` 能正常执行。
-2. 若没有环境变量覆盖，则配置文件或兼容旧配置至少要有一份可读取的有效 JSON。
-3. 做搜索前，必须存在至少一个搜索频道；若 `config --show` 里 `频道数量: 0`，先引导用户添加频道。
-4. 做 115 转存前，必须已经设置 `Cookie`；若 `config --show` 里显示 `Cookie: 未设置`，先引导用户执行 `cloudsaver-cli config --set-cookie`。
-5. 若启用了代理，确保代理主机非空、端口是有效整数；配置异常时先修复，不要继续请求。
-
-若任一条件不满足，先提醒用户初始化或修复配置，不要继续执行真实请求。
+正常执行时不要额外先做一轮手工检查；直接执行 `search` 或 `save`。只有当用户主动要求排查，或执行失败且看起来像配置问题时，再跑 `config --check`。
 
 ## 帮助探测
 
@@ -80,7 +77,7 @@ cloudsaver-cli config -h
 - 用户要把某个 115 分享链接转存到自己的网盘时，用 `save`
 - 用户给了目标文件夹 ID 时，用 `save <url> --folder <id>`
 - 用户没有给目标文件夹 ID 时，直接用 `save <url>`；CLI 会默认使用根目录下的“转存”文件夹，不需要再次确认
-- 用户要检查频道、Cookie、代理或配置状态时，用 `config --show`
+- 用户要检查频道、Cookie、代理或配置状态时，用 `config --show` 或 `config --check`
 - 用户要设置 Cookie、添加/删除频道、配置代理时，优先用显式选项：`config --set-cookie`、`config --add-channel`、`config --remove-channel`、`config --set-proxy`
 
 常用映射：
@@ -89,7 +86,7 @@ cloudsaver-cli config -h
 - “找阿里云盘的 4K 版本” -> `cloudsaver-cli search "<关键词> 4K"`
 - “把这个 115 链接转存到网盘” -> `cloudsaver-cli save "<url>"`
 - “把这个 115 链接转存到某个文件夹” -> `cloudsaver-cli save "<url>" --folder "<folder_id>"`
-- “看看 cloudsaver-cli 配置好了没” -> `cloudsaver-cli config --show`
+- “看看 cloudsaver-cli 配置好了没” -> `cloudsaver-cli config --check`
 
 补充约定：
 

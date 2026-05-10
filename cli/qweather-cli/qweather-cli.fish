@@ -8,8 +8,9 @@ complete -c qweather-cli -n "not __fish_seen_subcommand_from init config now dai
 complete -c qweather-cli -n "not __fish_seen_subcommand_from init config now daily hourly" -a daily -d '查询每日天气预报'
 complete -c qweather-cli -n "not __fish_seen_subcommand_from init config now daily hourly" -a hourly -d '查询逐小时天气预报'
 
-complete -c qweather-cli -n "__fish_seen_subcommand_from config; and not __fish_seen_subcommand_from show path" -a show -d '显示当前配置'
-complete -c qweather-cli -n "__fish_seen_subcommand_from config; and not __fish_seen_subcommand_from show path" -a path -d '输出配置文件路径'
+complete -c qweather-cli -n "__fish_seen_subcommand_from config; and not __fish_seen_subcommand_from show path check" -a show -d '显示当前配置'
+complete -c qweather-cli -n "__fish_seen_subcommand_from config; and not __fish_seen_subcommand_from show path check" -a path -d '输出配置文件路径'
+complete -c qweather-cli -n "__fish_seen_subcommand_from config; and not __fish_seen_subcommand_from show path check" -a check -d '检查配置是否可用'
 
 complete -c qweather-cli -n "__fish_seen_subcommand_from init" -l api-host -r -d 'QWeather API Host'
 complete -c qweather-cli -n "__fish_seen_subcommand_from init" -l api-key -r -d 'QWeather API Key'

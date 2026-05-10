@@ -17,6 +17,29 @@ CACHE_FILE="${CONFIG_DIR}/bugs_cache.json"
 
 die() { echo -e "${RED}错误：$1${RESET}" >&2; exit 1; }
 
+config_get() {
+  local key="$1"
+  grep -E "^${key}=" "$CONFIG_FILE" 2>/dev/null | head -1 | sed "s/^${key}=//"
+}
+
+validate_config_file() {
+  [ -f "$CONFIG_FILE" ] || die "尚未初始化配置。运行 pingcode-cli config init"
+
+  local missing=()
+  local key
+  for key in base_url session_cookie project_id view_id; do
+    local val
+    val="$(config_get "$key")"
+    if [ -z "$val" ]; then
+      missing+=("$key")
+    fi
+  done
+
+  if [ ${#missing[@]} -gt 0 ]; then
+    die "配置文件缺少以下字段：${missing[*]}\n请编辑 ${CONFIG_FILE} 补全配置，或删除后重新初始化。"
+  fi
+}
+
 # ─── 状态映射 ─────────────────────────────────────────────────────
 # 状态名 → state_id
 declare -A STATE_MAP=(
@@ -45,21 +68,7 @@ ensure_config() {
     return
   fi
 
-  # 校验必要字段
-  local missing=()
-  for key in base_url session_cookie project_id view_id; do
-    local val
-    val="$(config_get "$key")"
-    if [ -z "$val" ]; then
-      missing+=("$key")
-    fi
-  done
-
-  if [ ${#missing[@]} -gt 0 ]; then
-    echo -e "${YELLOW}配置文件缺少以下字段：${missing[*]}${RESET}"
-    echo -e "请编辑 ${CYAN}${CONFIG_FILE}${RESET} 补全配置，或删除后重新初始化。"
-    exit 1
-  fi
+  validate_config_file
 }
 
 init_config() {
@@ -147,11 +156,6 @@ EOF
   chmod 600 "$CONFIG_FILE"
   echo ""
   echo -e "${GREEN}配置已保存到 ${CONFIG_FILE}${RESET}"
-}
-
-config_get() {
-  local key="$1"
-  grep -E "^${key}=" "$CONFIG_FILE" 2>/dev/null | head -1 | sed "s/^${key}=//"
 }
 
 # ─── API 请求 ─────────────────────────────────────────────────────
@@ -387,8 +391,18 @@ cmd_config() {
     path)
       echo "$CONFIG_FILE"
       ;;
+    check)
+      validate_config_file
+      echo -e "${GREEN}配置检查通过${RESET}"
+      echo "config_file=${CONFIG_FILE}"
+      echo "base_url=$(config_get base_url)"
+      echo "session_cookie=****（已隐藏）"
+      echo "project_id=$(config_get project_id)"
+      echo "view_id=$(config_get view_id)"
+      echo "state_ids=$(config_get state_ids)"
+      ;;
     *)
-      die "未知子命令：$subcmd。可用：show, init, edit, path"
+      die "未知子命令：$subcmd。可用：show, init, edit, path, check"
       ;;
   esac
 }
@@ -403,7 +417,7 @@ ${BOLD}用法：${RESET}
 ${BOLD}命令：${RESET}
   bugs                          列出我的未解决缺陷
   set-state <编号> <状态>       修改缺陷状态
-  config                        管理配置（show|init|edit|path）
+  config                        管理配置（show|init|edit|path|check）
 
 ${BOLD}可用状态：${RESET}
   待处理  处理中  已修复  重新打开  挂起

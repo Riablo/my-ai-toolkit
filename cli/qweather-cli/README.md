@@ -115,6 +115,7 @@ qweather-cli now 北京 --raw
 ```bash
 qweather-cli config show
 qweather-cli config path
+qweather-cli config check
 ```
 
 ## 文档依据

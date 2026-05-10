@@ -236,4 +236,12 @@ export class ConfigManager {
   static getConfigPath() {
     return CONFIG_FILE;
   }
+
+  static getLegacyConfigPaths() {
+    return [LEGACY_CONFIG_FILE, LEGACY_LOCAL_FILE];
+  }
+
+  static hasAnyConfigFile() {
+    return [CONFIG_FILE, LEGACY_CONFIG_FILE, LEGACY_LOCAL_FILE].some((filePath) => fs.existsSync(filePath));
+  }
 }

@@ -126,6 +126,14 @@ def load_config() -> dict[str, str]:
     }
 
 
+def config_source() -> str:
+    env_host = os.environ.get("QWEATHER_API_HOST", "").strip()
+    env_key = os.environ.get("QWEATHER_API_KEY", "").strip()
+    if env_host and env_key:
+        return "environment"
+    return "file"
+
+
 def decode_response_body(body: bytes, headers: Any) -> bytes:
     if headers.get("Content-Encoding") == "gzip":
         return gzip.decompress(body)
@@ -366,6 +374,20 @@ def cmd_config_path(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_config_check(_: argparse.Namespace) -> int:
+    config = load_config()
+    emit_json(
+        {
+            "status": "ok",
+            "source": config_source(),
+            "configPath": str(CONFIG_PATH),
+            "apiHost": config["api_host"],
+            "apiKey": mask_api_key(config["api_key"]),
+        }
+    )
+    return 0
+
+
 def request_weather(
     args: argparse.Namespace,
     path: str,
@@ -415,6 +437,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_config_path = config_subparsers.add_parser("path", help="输出配置文件路径")
     p_config_path.set_defaults(func=cmd_config_path)
+
+    p_config_check = config_subparsers.add_parser("check", help="检查配置是否可用")
+    p_config_check.set_defaults(func=cmd_config_check)
 
     p_now = subparsers.add_parser("now", help="查询实时天气")
     add_common_weather_args(p_now)

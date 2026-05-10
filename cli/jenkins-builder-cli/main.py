@@ -905,6 +905,23 @@ def cmd_config_path(args: argparse.Namespace) -> None:
     print(CONFIG_PATH)
 
 
+def cmd_config_check(args: argparse.Namespace) -> None:
+    config = load_config(required=True)
+    payload = {
+        "status": "ok",
+        "configPath": str(CONFIG_PATH),
+        "jenkins": {
+            "url": normalize_base_url(str(config["jenkins"].get("url") or "")),
+            "username": str(config["jenkins"].get("username") or ""),
+            "token": masked_token(str(config["jenkins"].get("token") or "")),
+            "verify_ssl": bool(config["jenkins"].get("verify_ssl", DEFAULT_VERIFY_SSL)),
+        },
+        "jobsCount": len(config.get("jobs") or {}),
+        "groupsCount": len(config.get("groups") or {}),
+    }
+    print_json(payload)
+
+
 def cmd_jobs_list(args: argparse.Namespace) -> None:
     config, client, entries = create_client_and_entries(with_live_branch_specs=True)
     _ = client
@@ -1298,6 +1315,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     config_path = config_subparsers.add_parser("path", help="显示配置文件路径")
     config_path.set_defaults(func=cmd_config_path)
+
+    config_check = config_subparsers.add_parser("check", help="检查配置是否可用")
+    config_check.set_defaults(func=cmd_config_check)
 
     jobs_parser = subparsers.add_parser("jobs", help="列出和管理 jobs")
     jobs_subparsers = jobs_parser.add_subparsers(dest="jobs_command", required=True)

@@ -62,6 +62,7 @@ pingcode-cli set-state 720YUN-10515 处理中
 # 查看 / 编辑配置
 pingcode-cli config show
 pingcode-cli config edit
+pingcode-cli config check
 
 # Cookie 过期后重新初始化
 pingcode-cli config init

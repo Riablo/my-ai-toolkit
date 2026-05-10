@@ -16,3 +16,4 @@ complete -c pingcode-cli -n '__fish_seen_subcommand_from config' -a 'show' -d '�
 complete -c pingcode-cli -n '__fish_seen_subcommand_from config' -a 'init' -d '初始化配置'
 complete -c pingcode-cli -n '__fish_seen_subcommand_from config' -a 'edit' -d '编辑配置文件'
 complete -c pingcode-cli -n '__fish_seen_subcommand_from config' -a 'path' -d '显示配置文件路径'
+complete -c pingcode-cli -n '__fish_seen_subcommand_from config' -a 'check' -d '检查配置是否可用'

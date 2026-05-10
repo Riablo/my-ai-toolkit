@@ -98,6 +98,7 @@ freecurrency-cli latest --base TWD --currencies USD CNY JPY
 ```bash
 freecurrency-cli config show
 freecurrency-cli config path
+freecurrency-cli config check
 
 freecurrency-cli cache info
 freecurrency-cli cache clear

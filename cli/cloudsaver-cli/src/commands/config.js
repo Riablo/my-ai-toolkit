@@ -12,6 +12,7 @@ export function configCommand(program) {
     .option('--remove-channel', '删除搜索频道')
     .option('--set-proxy', '设置代理')
     .option('--show', '显示当前配置')
+    .option('--check', '检查当前配置是否可用')
     .action(async (options) => {
       try {
         const config = ConfigManager.load();
@@ -189,6 +190,43 @@ export function configCommand(program) {
           return;
         }
 
+        if (options.check) {
+          if (!ConfigManager.hasAnyConfigFile()) {
+            console.log(chalk.red('❌ 未找到配置文件'));
+            console.log(chalk.gray(`  主配置: ${ConfigManager.getConfigPath()}`));
+            ConfigManager.getLegacyConfigPaths().forEach((filePath) => {
+              console.log(chalk.gray(`  兼容旧配置: ${filePath}`));
+            });
+            process.exit(1);
+          }
+
+          const channelsCount = config.search.channels.length;
+          const hasCookie = Boolean(config.cloud115.cookie);
+          const searchReady = channelsCount > 0;
+          const saveReady = hasCookie;
+
+          if (!searchReady || !saveReady) {
+            console.log(chalk.yellow('⚠️  配置检查未通过'));
+            console.log(`  搜索频道: ${searchReady ? chalk.green(`已配置 ${channelsCount} 个`) : chalk.red('未配置')}`);
+            console.log(`  115 Cookie: ${saveReady ? chalk.green('已设置') : chalk.red('未设置')}`);
+            console.log(chalk.gray(`  配置位置: ${ConfigManager.getConfigPath()}`));
+            process.exit(1);
+          }
+
+          console.log(chalk.green('✅ 配置检查通过'));
+          console.log(`  搜索频道: ${channelsCount} 个`);
+          console.log('  115 Cookie: 已设置');
+          console.log(
+            `  代理: ${
+              config.search.proxy?.enabled
+                ? `${config.search.proxy.host}:${config.search.proxy.port}`
+                : '禁用'
+            }`,
+          );
+          console.log(chalk.gray(`  配置位置: ${ConfigManager.getConfigPath()}`));
+          return;
+        }
+
         const { action } = await inquirer.prompt([
           {
             type: 'list',
@@ -200,6 +238,7 @@ export function configCommand(program) {
               { name: '删除搜索频道', value: 'removeChannel' },
               { name: '设置代理', value: 'proxy' },
               { name: '查看当前配置', value: 'show' },
+              { name: '检查当前配置', value: 'check' },
             ],
           },
         ]);
@@ -219,6 +258,9 @@ export function configCommand(program) {
             break;
           case 'show':
             await program.parseAsync(['node', 'script', 'config', '--show']);
+            break;
+          case 'check':
+            await program.parseAsync(['node', 'script', 'config', '--check']);
             break;
           default:
             break;
