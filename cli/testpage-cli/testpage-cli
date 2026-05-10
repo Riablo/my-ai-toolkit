@@ -1,0 +1,464 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_DIR="${HOME}/.config/testpage-cli"
+CONFIG_PATH="${CONFIG_DIR}/config.conf"
+DEFAULT_BASE_URL="https://test.720yun.com/html_test/"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+RESET='\033[0m'
+
+die() {
+  echo -e "${RED}错误：$1${RESET}" >&2
+  exit 1
+}
+
+info() {
+  echo -e "${CYAN}$1${RESET}"
+}
+
+success() {
+  echo -e "${GREEN}$1${RESET}"
+}
+
+trim() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+join_by_slash() {
+  local parts=("$@")
+  local first=1
+  local result=""
+  local part
+  for part in "${parts[@]}"; do
+    if [ "$first" -eq 1 ]; then
+      result="$part"
+      first=0
+    else
+      result="${result}/$part"
+    fi
+  done
+  printf '%s' "$result"
+}
+
+canonicalize_dir() {
+  local raw="$1"
+  [ -d "$raw" ] || die "目录不存在：$raw"
+  (
+    cd "$raw"
+    pwd -P
+  )
+}
+
+canonicalize_source_dir() {
+  local raw="$1"
+  [ -d "$raw" ] || die "源目录不存在：$raw"
+  (
+    cd "$raw"
+    pwd -P
+  )
+}
+
+normalize_base_url() {
+  local raw
+  raw="$(trim "$1")"
+  [ -n "$raw" ] || die "base_url 不能为空"
+
+  case "$raw" in
+    http://*|https://*)
+      ;;
+    *)
+      die "base_url 必须以 http:// 或 https:// 开头"
+      ;;
+  esac
+
+  raw="${raw%/}/"
+  printf '%s' "$raw"
+}
+
+validate_git_repo() {
+  local dir="$1"
+  git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || die "project_root 不是 Git 仓库：$dir"
+}
+
+write_config() {
+  local project_root="$1"
+  local base_url="$2"
+  mkdir -p "$CONFIG_DIR"
+  umask 077
+  {
+    printf 'project_root=%s\n' "$project_root"
+    printf 'base_url=%s\n' "$base_url"
+  } >"$CONFIG_PATH"
+}
+
+CONFIG_PROJECT_ROOT=""
+CONFIG_BASE_URL=""
+
+load_config() {
+  [ -f "$CONFIG_PATH" ] || die "配置文件不存在，请先运行：testpage-cli init --project-root <路径>"
+
+  local line key value
+  local project_root=""
+  local base_url=""
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="$(trim "$line")"
+    [ -n "$line" ] || continue
+    case "$line" in
+      \#*) continue ;;
+    esac
+
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="$(trim "$key")"
+    value="$(trim "$value")"
+
+    case "$key" in
+      project_root) project_root="$value" ;;
+      base_url) base_url="$value" ;;
+    esac
+  done <"$CONFIG_PATH"
+
+  [ -n "$project_root" ] || die "配置文件缺少 project_root：$CONFIG_PATH"
+  [ -n "$base_url" ] || die "配置文件缺少 base_url：$CONFIG_PATH"
+
+  CONFIG_PROJECT_ROOT="$(canonicalize_dir "$project_root")"
+  CONFIG_BASE_URL="$(normalize_base_url "$base_url")"
+  validate_git_repo "$CONFIG_PROJECT_ROOT"
+}
+
+ensure_has_html() {
+  local source_dir="$1"
+  local html_file
+  html_file="$(find "$source_dir" -type f \( -iname '*.html' -o -iname '*.htm' \) -print -quit)"
+  [ -n "$html_file" ] || die "源目录里没有找到 HTML 文件：$source_dir"
+}
+
+normalize_subdir() {
+  local raw="$1"
+  local trimmed segments=()
+  local segment
+
+  trimmed="$(trim "$raw")"
+  trimmed="${trimmed#/}"
+  trimmed="${trimmed%/}"
+  [ -n "$trimmed" ] || die "--subdir 不能为空"
+
+  IFS='/' read -r -a segments <<<"$trimmed"
+  [ "${#segments[@]}" -gt 0 ] || die "--subdir 不能为空"
+
+  local cleaned=()
+  for segment in "${segments[@]}"; do
+    [ -n "$segment" ] || die "--subdir 不能包含空路径段"
+    [ "$segment" != "." ] || die "--subdir 不能包含 ."
+    [ "$segment" != ".." ] || die "--subdir 不能包含 .."
+    cleaned+=("$segment")
+  done
+
+  join_by_slash "${cleaned[@]}"
+}
+
+normalize_name() {
+  local raw="$1"
+  local trimmed
+
+  trimmed="$(trim "$raw")"
+  [ -n "$trimmed" ] || die "--name 不能为空"
+  case "$trimmed" in
+    */*) die "--name 不能包含 /" ;;
+  esac
+  [ "$trimmed" != "." ] || die "--name 不能是 ."
+  [ "$trimmed" != ".." ] || die "--name 不能是 .."
+  printf '%s' "$trimmed"
+}
+
+encode_url_path() {
+  local raw="$1"
+  python3 - "$raw" <<'PY'
+import sys
+from urllib.parse import quote
+
+raw = sys.argv[1]
+parts = [segment for segment in raw.split("/") if segment]
+print("/".join(quote(segment) for segment in parts))
+PY
+}
+
+ensure_clean_worktree() {
+  local repo_root="$1"
+  local status_output
+  status_output="$(git -C "$repo_root" status --porcelain)"
+  [ -z "$status_output" ] || die "Git 工作区不干净，请先提交或清理现有改动：$repo_root"
+}
+
+current_branch() {
+  local repo_root="$1"
+  local branch
+  branch="$(git -C "$repo_root" branch --show-current)"
+  [ -n "$branch" ] || die "当前不在分支上，无法执行 pull/push"
+  printf '%s' "$branch"
+}
+
+build_target_rel() {
+  local subdir="$1"
+  local name="$2"
+  if [ -n "$subdir" ]; then
+    printf '%s/%s' "$subdir" "$name"
+  else
+    printf '%s' "$name"
+  fi
+}
+
+ensure_source_target_safe() {
+  local source_dir="$1"
+  local target_dir="$2"
+  case "$target_dir" in
+    "$source_dir"|"$source_dir"/*)
+      die "目标目录不能位于源目录内部：$target_dir"
+      ;;
+  esac
+  case "$source_dir" in
+    "$target_dir"|"$target_dir"/*)
+      die "源目录不能位于目标目录内部：$source_dir"
+      ;;
+  esac
+}
+
+deploy_directory() {
+  local source_dir="$1"
+  local target_dir="$2"
+
+  local target_parent target_name staging_dir
+  target_parent="$(dirname "$target_dir")"
+  target_name="$(basename "$target_dir")"
+  mkdir -p "$target_parent"
+  staging_dir="$(mktemp -d "${target_parent}/.${target_name}.tmp.XXXXXX")"
+
+  cleanup_staging() {
+    [ -n "${staging_dir:-}" ] && [ -d "$staging_dir" ] && rm -rf "$staging_dir"
+  }
+  trap cleanup_staging EXIT
+
+  rsync -a --exclude '.git/' "$source_dir"/ "$staging_dir"/
+
+  rm -rf "$target_dir"
+  mv "$staging_dir" "$target_dir"
+  trap - EXIT
+}
+
+print_main_help() {
+  cat <<EOF
+testpage-cli - 测试 HTML 页面快速发布工具
+
+用法：
+  testpage-cli init --project-root <路径> [--base-url <URL>]
+  testpage-cli config show
+  testpage-cli config path
+  testpage-cli push <source-dir> [--subdir <相对路径>] [--name <目录名>]
+
+说明：
+  - 配置一个本地 Git 项目目录，例如 /Users/cz/Work/html_test/
+  - 将包含 HTML 的目录复制到目标位置
+  - 复制完成后自动执行 git fetch、pull、commit、push
+  - 任一步 Git 失败即停止
+
+示例：
+  testpage-cli init --project-root /Users/cz/Work/html_test
+  testpage-cli push ./dist
+  testpage-cli push ./dist --name T2Vision-demo
+  testpage-cli push ./dist --subdir chenzheng --name why-html-over-markdown
+EOF
+}
+
+print_config_help() {
+  cat <<EOF
+用法：
+  testpage-cli config show
+  testpage-cli config path
+EOF
+}
+
+cmd_init() {
+  local project_root=""
+  local base_url="$DEFAULT_BASE_URL"
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --project-root)
+        [ $# -ge 2 ] || die "--project-root 需要一个参数"
+        project_root="$2"
+        shift 2
+        ;;
+      --base-url)
+        [ $# -ge 2 ] || die "--base-url 需要一个参数"
+        base_url="$2"
+        shift 2
+        ;;
+      -h|--help)
+        print_main_help
+        return 0
+        ;;
+      *)
+        die "未知参数：$1"
+        ;;
+    esac
+  done
+
+  [ -n "$project_root" ] || die "请提供 --project-root"
+  project_root="$(canonicalize_dir "$project_root")"
+  validate_git_repo "$project_root"
+  base_url="$(normalize_base_url "$base_url")"
+
+  write_config "$project_root" "$base_url"
+
+  success "配置已写入：$CONFIG_PATH"
+  echo "project_root: $project_root"
+  echo "base_url: $base_url"
+}
+
+cmd_config() {
+  [ $# -ge 1 ] || {
+    print_config_help
+    return 1
+  }
+
+  case "$1" in
+    show)
+      load_config
+      echo "project_root=${CONFIG_PROJECT_ROOT}"
+      echo "base_url=${CONFIG_BASE_URL}"
+      ;;
+    path)
+      echo "$CONFIG_PATH"
+      ;;
+    -h|--help)
+      print_config_help
+      ;;
+    *)
+      die "未知 config 子命令：$1"
+      ;;
+  esac
+}
+
+cmd_push() {
+  [ $# -ge 1 ] || die "请提供源目录。用法：testpage-cli push <source-dir> [--subdir <相对路径>] [--name <目录名>]"
+
+  local source_arg="$1"
+  shift
+
+  local subdir=""
+  local name=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --subdir)
+        [ $# -ge 2 ] || die "--subdir 需要一个参数"
+        subdir="$(normalize_subdir "$2")"
+        shift 2
+        ;;
+      --name)
+        [ $# -ge 2 ] || die "--name 需要一个参数"
+        name="$(normalize_name "$2")"
+        shift 2
+        ;;
+      -h|--help)
+        print_main_help
+        return 0
+        ;;
+      *)
+        die "未知参数：$1"
+        ;;
+    esac
+  done
+
+  load_config
+
+  local source_dir
+  source_dir="$(canonicalize_source_dir "$source_arg")"
+  ensure_has_html "$source_dir"
+
+  if [ -z "$name" ]; then
+    name="$(basename "$source_dir")"
+  fi
+
+  local target_rel
+  target_rel="$(build_target_rel "$subdir" "$name")"
+
+  local target_dir
+  target_dir="${CONFIG_PROJECT_ROOT}/${target_rel}"
+  ensure_source_target_safe "$source_dir" "$target_dir"
+
+  ensure_clean_worktree "$CONFIG_PROJECT_ROOT"
+
+  local branch
+  branch="$(current_branch "$CONFIG_PROJECT_ROOT")"
+
+  info "执行 git fetch..."
+  git -C "$CONFIG_PROJECT_ROOT" fetch --all --prune
+
+  info "执行 git pull --ff-only origin ${branch}..."
+  git -C "$CONFIG_PROJECT_ROOT" pull --ff-only origin "$branch"
+
+  info "同步文件到 ${target_rel} ..."
+  deploy_directory "$source_dir" "$target_dir"
+
+  git -C "$CONFIG_PROJECT_ROOT" add --all -- "$target_rel"
+
+  if git -C "$CONFIG_PROJECT_ROOT" diff --cached --quiet -- "$target_rel"; then
+    local encoded_rel
+    encoded_rel="$(encode_url_path "$target_rel")"
+    success "目标内容没有变化，无需提交。"
+    echo "${CONFIG_BASE_URL}${encoded_rel}/"
+    return 0
+  fi
+
+  local commit_message
+  commit_message="testpage-cli: publish ${target_rel}"
+
+  info "执行 git commit..."
+  git -C "$CONFIG_PROJECT_ROOT" commit -m "$commit_message"
+
+  info "执行 git push..."
+  git -C "$CONFIG_PROJECT_ROOT" push origin "$branch"
+
+  local encoded_rel
+  encoded_rel="$(encode_url_path "$target_rel")"
+  success "发布完成："
+  echo "${CONFIG_BASE_URL}${encoded_rel}/"
+}
+
+main() {
+  local command="${1:-}"
+  case "$command" in
+    init)
+      shift
+      cmd_init "$@"
+      ;;
+    config)
+      shift
+      cmd_config "$@"
+      ;;
+    push)
+      shift
+      cmd_push "$@"
+      ;;
+    -h|--help|help|"")
+      print_main_help
+      ;;
+    *)
+      die "未知命令：$command"
+      ;;
+  esac
+}
+
+main "$@"
