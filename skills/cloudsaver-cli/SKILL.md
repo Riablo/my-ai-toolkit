@@ -38,6 +38,13 @@ cloudsaver-cli config --add-channel
 cloudsaver-cli config --set-cookie
 ```
 
+补充约束：
+
+- `cloudsaver-cli config --add-channel`、`cloudsaver-cli config --set-cookie`、`cloudsaver-cli config --set-proxy` 都是会修改本机配置的命令
+- 不要因为 skill 里列出了这些初始化命令，就自动执行它们
+- 只有当用户明确要求初始化/修改配置，或明确同意进入这一步时，才执行这些命令
+- 如果用户还没给出频道、Cookie 或代理信息，就先向用户要这些值，不要擅自进入交互流程
+
 如果只是想确认当前 CLI 读到的配置，运行：
 
 ```bash

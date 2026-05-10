@@ -36,6 +36,13 @@ mkdir -p ~/.config/mosaic-notes
 }
 ```
 
+补充约束：
+
+- 上面的 `vault_path` 只是示例，不是默认值
+- 不要假设 vault 一定在 `/Users/cz/Vaults/Mosaic`
+- 如果当前机器没有配置 `mosaic-notes`，必须先由用户明确提供真实的 vault 路径，再写入配置
+- 如果用户没有确认路径，不要自动创建配置文件
+
 ### 配置校验
 
 配置文件存在时，检查以下条件，任一不满足则提醒用户并协助修复：

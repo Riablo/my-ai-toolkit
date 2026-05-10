@@ -39,6 +39,15 @@ testpage-cli init --project-root /Users/cz/Work/html_test
 testpage-cli init --project-root /Users/cz/Work/html_test --default-subdir chenzheng
 ```
 
+重要约束：
+
+- 不要因为看到 skill 里的示例命令，就自动执行 `testpage-cli init`
+- 不要假设 `project_root` 一定是 `/Users/cz/Work/html_test`
+- 不要假设 `default_subdir` 一定是 `chenzheng`
+- 如果当前机器还没初始化，必须先让用户明确指定要用的 `project_root`，以及是否要设置 `default_subdir`
+- 只有在用户已经明确给出这些值之后，才可以执行 `testpage-cli init ...`
+- 如果用户没有给 `default_subdir`，就不要替用户擅自补一个
+
 若只是想看当前 CLI 读到的配置，运行：
 
 ```bash
@@ -58,6 +67,12 @@ testpage-cli config check
 ```
 
 正常发布时不要额外先做一轮手工检查；直接执行 `push` 即可。只有当用户主动要求排查，或 `push` 失败且看起来像配置/仓库问题时，再跑 `config check`。
+
+初始化策略：
+
+- 若用户只是要发布页面，先直接执行 `push`
+- 只有当 `push` 失败并明确提示“未初始化”或配置不可用时，才进入初始化流程
+- 进入初始化流程后，先向用户确认 `project_root` 和可选的 `default_subdir`，不要直接使用示例值
 
 ## 帮助探测
 
@@ -84,6 +99,11 @@ testpage-cli push -h
 - 用户要“初始化 testpage-cli”“配置 html_test 仓库路径”“设置默认发布子目录”时，用 `testpage-cli init`
 - 用户要“看当前配置”“确认配置文件路径”“排查是不是读到了正确仓库”“检查配置和仓库状态”时，用 `testpage-cli config show`、`testpage-cli config path` 或 `testpage-cli config check`
 - 用户要“发布这个 HTML 目录”“把 dist 同步到测试服”“上传单页 HTML 应用”“返回测试链接”时，用 `testpage-cli push`
+
+补充约束：
+
+- 对“初始化”相关请求，只有在用户明确给出目录和子目录，或明确同意使用某个值之后，才能执行 `init`
+- 不要从示例路径、仓库 README、历史常见值里推断出一个固定目录并直接执行
 
 发布命令的语义映射：
 
