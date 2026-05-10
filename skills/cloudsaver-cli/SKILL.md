@@ -1,127 +1,81 @@
 ---
 name: cloudsaver-cli
-description: 使用 `cloudsaver-cli` 搜索 Telegram 频道里的网盘资源，并将 115 分享资源转存到自己的 115 网盘。当用户提到“帮我搜片源/资源”“找 115 或阿里云盘链接”“看看有没有 4K/1080P 资源”“把这个 115 链接转存到网盘”“检查 cloudsaver-cli 的频道、Cookie 或代理配置”等，或希望 AI 通过命令行完成这些任务时使用此技能。
+description: 当用户想搜索 Telegram 频道里的网盘资源、找 115 或阿里云盘链接、把 115 分享链接转存到自己的网盘，或排查 `cloudsaver-cli` 的频道、Cookie、代理配置时使用。
 ---
 
 # CloudSaver CLI
 
-使用 `cloudsaver-cli` 完成资源搜索和 115 转存。默认直接执行搜索或转存；只有用户明确要排查配置，或执行因配置问题失败时，再使用 `config` 相关命令。
+用 `cloudsaver-cli` 做两件事：搜索资源，或把 115 分享转存到自己的网盘。
 
-## CLI 定位
+## 核心原则
+
+- 默认直接执行 `search` 或 `save`，不要每次先跑配置检查。
+- 只有当用户主动要排查，或主命令失败且像配置问题时，才运行 `config --check`。
+- 写配置的命令如 `config --add-channel`、`config --set-cookie`、`config --set-proxy`，只有在用户明确要求初始化或修改时才执行。
+- `config` 不带选项会进入交互菜单；AI 默认不要走这个入口。
+
+## CLI 入口
 
 - 优先使用 PATH 中的 `cloudsaver-cli`
-- 若未安装，则回到仓库里的 `cli/cloudsaver-cli/cloudsaver-cli`
-- 这个入口是 Bash 包装脚本，实际会调用同目录下的 Node bundle；若直接执行失败，再先检查 `node` 是否可用且版本不少于 18
+- 若未安装，再回到仓库里的 `cli/cloudsaver-cli/cloudsaver-cli`
+- 这是 Bash 包装脚本，实际依赖 Node；若入口本身失败，优先检查 `node` 是否可用且版本不少于 18
 
-定位仓库内 CLI 时，使用下面的约定：
+## 初始化与检查
 
-- `SKILL_DIR` = 当前 `SKILL.md` 所在目录
-- `PROJECT_ROOT` = `SKILL_DIR` 的上上级目录
-- `TOOL_PATH` = `PROJECT_ROOT/cli/cloudsaver-cli/cloudsaver-cli`
-
-## 初始化
-
-首次使用时需要初始化：
-
-- 主配置文件：`~/.config/cloudsaver-cli/config.json`
+- 主配置：`~/.config/cloudsaver-cli/config.json`
 - 兼容旧配置：`~/.config/cloudsaver/config.json`、`~/.config/cloudsaver/local.json`
-- 可选代理环境变量：`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY`
-- Cookie 初始化：`cloudsaver-cli config --set-cookie`
-- 搜索频道初始化：`cloudsaver-cli config --add-channel`
-- 配置查看：`cloudsaver-cli config --show`
-- 配置检查：`cloudsaver-cli config --check`
+- 代理环境变量：`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY`
+- 查看配置：`cloudsaver-cli config --show`
+- 自检：`cloudsaver-cli config --check`
 
-若用户还没初始化，优先引导他：
+若用户还没初始化，通常需要两步：
 
 ```bash
 cloudsaver-cli config --add-channel
 cloudsaver-cli config --set-cookie
 ```
 
-补充约束：
-
-- `cloudsaver-cli config --add-channel`、`cloudsaver-cli config --set-cookie`、`cloudsaver-cli config --set-proxy` 都是会修改本机配置的命令
-- 不要因为 skill 里列出了这些初始化命令，就自动执行它们
-- 只有当用户明确要求初始化/修改配置，或明确同意进入这一步时，才执行这些命令
-- 如果用户还没给出频道、Cookie 或代理信息，就先向用户要这些值，不要擅自进入交互流程
-
-如果只是想确认当前 CLI 读到的配置，运行：
-
-```bash
-cloudsaver-cli config --show
-```
-
-需要快速检查当前配置是否可用时，运行：
-
-```bash
-cloudsaver-cli config --check
-```
-
-正常执行时不要额外先做一轮手工检查；直接执行 `search` 或 `save`。只有当用户主动要求排查，或执行失败且看起来像配置问题时，再跑 `config --check`。
+但不要因为 skill 里写了这两条就自动执行；频道、Cookie、代理都属于显式用户输入。
 
 ## 帮助探测
 
-先运行：
+先看顶层帮助；参数不确定时再看对应子命令：
 
 ```bash
 cloudsaver-cli -h
-```
-
-遇到参数细节不确定时，再查看对应子命令：
-
-```bash
 cloudsaver-cli search -h
 cloudsaver-cli save -h
 cloudsaver-cli config -h
 ```
 
-如果 PATH 中没有命令，就把上面的 `cloudsaver-cli` 替换成仓库内入口或 `bash TOOL_PATH`。
+## 路由规则
 
-## 命令路由
+- 搜索片源、网盘资源、115/阿里云盘链接：用 `search`
+- 明确给出片名、年份、清晰度时，直接把这些词拼进搜索词
+- 转存 115 分享链接：用 `save`
+- 用户给了目标文件夹 ID：加 `--folder`
+- 排查频道、Cookie、代理或配置状态：用 `config --show` 或 `config --check`
 
-- 用户要搜索片源、网盘资源、115/阿里云盘链接时，用 `search`
-- 用户明确给出关键词、片名、剧名、年份、清晰度时，把这些词直接作为 `search <keyword>` 输入
-- 用户要把某个 115 分享链接转存到自己的网盘时，用 `save`
-- 用户给了目标文件夹 ID 时，用 `save <url> --folder <id>`
-- 用户没有给目标文件夹 ID 时，直接用 `save <url>`；CLI 会默认使用根目录下的“转存”文件夹，不需要再次确认
-- 用户要检查频道、Cookie、代理或配置状态时，用 `config --show` 或 `config --check`
-- 用户要设置 Cookie、添加/删除频道、配置代理时，优先用显式选项：`config --set-cookie`、`config --add-channel`、`config --remove-channel`、`config --set-proxy`
+## 高价值 gotchas
 
-常用映射：
-
-- “帮我搜《完美的日子》115 资源” -> `cloudsaver-cli search "完美的日子 115"`
-- “找阿里云盘的 4K 版本” -> `cloudsaver-cli search "<关键词> 4K"`
-- “把这个 115 链接转存到网盘” -> `cloudsaver-cli save "<url>"`
-- “把这个 115 链接转存到某个文件夹” -> `cloudsaver-cli save "<url>" --folder "<folder_id>"`
-- “看看 cloudsaver-cli 配置好了没” -> `cloudsaver-cli config --check`
-
-补充约定：
-
-- `search` 默认是表格输出；若需要更容易解析的终端输出，优先加 `--no-table`
-- `search` 结果会优先把 115 资源排前，再到阿里云和其他网盘；同层里优先清晰度更高的结果
-- `save` 在未提供 URL 时会进入交互式输入；若用户已经给了链接，优先把 URL 直接作为参数传入
-- `config` 不带选项会进入交互菜单；AI 默认不要走这个交互入口，优先使用显式选项
+- `search` 默认表格输出；如果需要更容易复述的终端结果，优先加 `--no-table`
+- 搜索结果会优先把 115 资源排前，再到阿里云和其他网盘；同层里通常优先清晰度更高的结果
+- `save` 在未提供 URL 时会进入交互式输入；用户已经给了链接时，直接把 URL 作为参数传入
+- 用户没给目标文件夹 ID 时，`save <url>` 可直接执行；CLI 会使用默认“转存”目录
+- 常见配置缺失是“还没加搜索频道”或“115 Cookie 已过期”
 
 ## 输出转述
 
-执行 CLI 后，先给人类可读的结论，再补关键细节：
+- `search`：先说有没有找到，优先推荐前几条 115 / 阿里云结果，再补频道、时间、清晰度关键词
+- `save`：先说是否转存成功，再补目标文件夹、文件数量、失败项和失败原因
+- `config --show`：先总结频道、代理、Cookie 是否已配置，再补配置路径
 
-- `search`：先总结是否找到资源、优先推荐前几条 115 / 阿里云结果，再补频道、时间、链接类型、清晰度关键词
-- `save`：先总结是否转存成功，再补目标文件夹、文件数量、失败项和失败原因
-- `config --show`：先总结频道是否已配置、代理是否启用、Cookie 是否已设置，再补配置路径
-
-除非用户明确要原始输出、调试日志或完整表格，否则不要整段照抄终端输出。
+除非用户明确要原始输出，否则不要整段照抄终端表格或日志。
 
 ## 常见错误
 
-- `请先配置搜索频道`：说明还没有添加 Telegram 频道，先执行 `cloudsaver-cli config --add-channel`
-- `请先设置115网盘Cookie`：说明还没有登录态，先执行 `cloudsaver-cli config --set-cookie`
-- `无效的115分享链接`：说明链接格式不对，检查是否真的是 `115.com` / `115cdn.com` / `anxia.com` 的分享链接
-- `分享已取消`：链接解析正常，但 115 服务端认为该分享已失效
-- `分享中没有文件`：分享还在，但当前列表为空
-- `Cookie可能已过期`：重新设置 Cookie 再试
-- `配置文件不是合法 JSON` / 配置字段缺失：先修复配置文件，再继续执行
-
-## 维护约定
-
-当 `cloudsaver-cli` 新增子命令、参数、配置规则、搜索排序规则或转存行为时，同步更新这个 skill 和仓库根目录 `README.md`。
+- `请先配置搜索频道`：还没添加 Telegram 频道
+- `请先设置115网盘Cookie`：还没配置登录态或 Cookie 已过期
+- `无效的115分享链接`：链接格式不对
+- `分享已取消` / `分享中没有文件`：链接解析正常，但服务端资源不可用
+- 配置文件非法或字段缺失：先修配置，再继续执行

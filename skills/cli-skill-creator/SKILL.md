@@ -1,108 +1,70 @@
 ---
 name: cli-skill-creator
-description: 为本仓库 `cli/` 下的命令行工具创建或更新 AI skill。当用户提到“给某个 CLI 写一个 skill”、“让 AI 能用自然语言调用某个命令行工具”、“基于 help/README 为 qweather-cli、freecurrency-cli、myskills 等工具制作 skill”或“把 CLI 包装成可安装的 skill”时使用。联用通用 `skill-creator` 的原则，但优先遵循本技能里的仓库路径、CLI 探测、配置检查入口、结果转述和 README 同步规则。
+description: 为本仓库 `cli/` 下的命令行工具创建或更新 skill 时使用。用户提到“给某个 CLI 写 skill”“让 AI 用自然语言调用某个命令行工具”“把仓库里的 CLI 包装成可安装 skill”时触发。
 ---
 
 # CLI Skill Creator
 
-为 `my-ai-toolkit` 中的 CLI 工具生成 skill。保持生成结果轻量、可安装、可维护；不要把 CLI 的整份帮助信息抄进 skill，优先让后续 AI 在运行时调用 `-h` 获取最新能力。
+为 `my-ai-toolkit` 中的 CLI 生成轻量、可维护的 skill。把通用 skill 设计原则当底座，把本技能当成仓库内 CLI 的专用补丁。
 
-## 联用方式
+## 目标
 
-把通用 `skill-creator` 当作技能设计总规范，把本技能当作这个仓库的 CLI 专用补丁。
-
-若两者冲突，优先遵循仓库内的 `AGENTS.md`、CLI 实际行为和本技能。
-
-## 目标产物
-
-默认在 `skills/<skill-name>/` 下创建 skill，并至少包含 `SKILL.md`。
-
-若目标环境依赖技能列表的 UI 元数据，再补一个最小的 `agents/openai.yaml`。
-
-只有在确实需要额外模板、复杂说明或示例时再增加 `references/`、`scripts/` 或 `assets/`。不要额外创建 `README.md`、`CHANGELOG.md` 一类文件。
-
-新增 skill 后，同步更新仓库根目录的 `README.md` 表格。
+- 产出默认放在 `skills/<skill-name>/`
+- 至少包含 `SKILL.md`
+- 只有确实需要时才增加 `references/`、`scripts/`、`assets/` 或 `agents/openai.yaml`
+- 新增 skill 后同步更新仓库根目录 `README.md`
 
 ## 先确认 CLI 事实
 
-先读取这些位置：
+先读：
 
 - `cli/<tool-name>/<tool-name>`
 - `cli/<tool-name>/README.md`（若存在）
 - 仓库根目录 `AGENTS.md`
 
-然后按下面顺序探测 CLI：
+再探测 CLI：
 
-1. 先看入口文件的 shebang、扩展名和可执行方式，不要假设它一定是 bash。
-2. 优先运行 `<tool-name> -h`；若工具未安装到 PATH，则改用仓库内入口文件。
-3. 若直接执行失败，按入口类型切换解释器，例如 Python 入口用 `python3 cli/<tool-name>/<tool-name> -h`。
-4. 若存在子命令，再运行 `<tool-name> <subcommand> -h` 收集各子命令职责和关键参数。
-5. 再读源码，补充这些 `-h` 不一定会完整暴露的信息：配置文件路径、环境变量、初始化命令、缓存路径、输出格式、典型报错，以及是否已有 `config check` / `config --check` 一类的自检入口。
+1. 先确认入口类型，不要默认它一定是 Bash。
+2. 优先运行顶层 `-h`；若未安装到 PATH，改用仓库内入口。
+3. 若直接执行失败，再按入口类型切换解释器。
+4. 若有子命令，再看相关子命令 `-h`。
+5. 最后读源码，补 `-h` 不会直接暴露的事实：配置文件、环境变量、自检入口、缓存路径、输出格式、典型报错。
 
-若 `-h` 本身就失败，不要臆造功能；先从源码和 README 判断真实调用方式。若工具当前损坏，也要在生成的 skill 中写明限制或初始化要求。
+若 `-h` 本身失败，不要臆造功能；先从源码和 README 判断真实调用方式。
 
-## 生成 skill 时必须覆盖的内容
+## 写 skill 时只保留高价值信息
 
-为每个基于 CLI 的 skill 至少写清楚这些内容：
+不要把 help 文档搬进 skill。只保留后续 AI 反复需要、但靠常识推不出来的内容：
 
-1. frontmatter：说明这个 skill 做什么，以及用户用什么自然语言表达时应该触发。
-2. 初始化：说明 CLI 是否需要 `init`、配置文件、环境变量、登录态或 API key。
-3. 配置检查入口：若 CLI 涉及配置，优先提供 `config check` 或 `config --check`；skill 默认应直接执行主命令，只有用户主动排查，或主命令因配置问题失败时，再建议执行检查命令。
-4. 命令选择：把用户语义映射到 CLI 的子命令或参数类别。
-5. 帮助探测：提醒后续 AI 遇到细节不确定时，先跑 `-h` 或子命令 `-h`。
-6. 输出转述：先给人类可读的结论，再按需要附上原始输出或关键字段。
-7. 维护约定：CLI 新增子命令、参数或配置规则时，要同步更新 skill 和仓库 `README.md`。
+- 什么时候触发这个 skill
+- CLI 是否需要初始化、配置文件、登录态或 API key
+- 默认应该直接执行主命令，还是先做某种轻量检查
+- 用户语义如何映射到子命令类别
+- 哪些失败最常见、最容易踩坑
+- 输出应怎样转述成人话
 
-## 路径与安装约定
+参数细节、枚举值、完整示例留给运行时 `-h`。
 
-假定 skill 与 CLI 同在这个仓库内，即：
+## 正文结构建议
 
-- skill 位于 `skills/<skill-name>/`
-- CLI 位于 `cli/<tool-name>/`
+优先把每个 CLI skill 写成这几个部分：
 
-即使 skill 之后通过 `myskills` 软链接到 `~/.agents/skills/` 或 `~/.claude/skills/`，也优先把 `SKILL.md` 所在目录当作真实源目录，再回到仓库根目录定位对应 CLI。
+1. `description`：只写触发场景，不写实现细节
+2. 核心原则：默认动作、什么时候看 `-h`、什么时候不要自动执行初始化
+3. 路由规则：用户意图到子命令的大致映射
+4. Gotchas：配置坑、交互坑、危险操作、输出陷阱
+5. 输出转述：先结论，后关键字段
 
-默认把 `PROJECT_ROOT` 视为 `skills/` 的上一级目录，把 `TOOL_DIR` 视为 `PROJECT_ROOT/cli/<tool-name>`。
+如果某个工具有很多分支，再把重内容拆到 `references/`。
 
-## 生成内容要保持轻量
+## 仓库约定
 
-不要把整份 `-h` 输出搬进 skill。只保留后续 AI 反复需要、但仅靠常识推不出来的内容，例如：
+- 默认把 `PROJECT_ROOT` 视为 `skills/` 的上一级目录
+- 对应 CLI 默认位于 `PROJECT_ROOT/cli/<tool-name>`
+- 如果 CLI 涉及配置，自检入口要优先写清楚，但不要要求每次执行前都先跑一遍
+- 对 `init`、登录、写配置这类会修改本机状态的命令，只有在用户明确给出必要参数或明确同意时才执行
+- 输出默认先给自然语言结论，不要机械倾倒 JSON
 
-- 工具需要哪些初始化步骤
-- 配置文件或环境变量叫什么
-- 是否已经提供 `config check` / `config --check`
-- 用户语义到子命令的大致映射
-- 输出应该怎样翻译成人类语言
-- 哪些子命令值得优先查看 `-h`
+## 维护
 
-参数细节、枚举值、帮助文本示例留给运行时的 CLI 自己回答。
-
-## 命令选择与结果转述
-
-写生成的 skill 时，明确要求后续 AI：
-
-- 先理解用户意图，再选择最接近的子命令
-- 默认直接执行主命令；不要在每次执行前手工翻配置文件或额外跑一轮检查
-- 只有当用户明确要求排查配置，或主命令失败且像配置问题时，再优先调用 CLI 自带的 `config check` / `config --check`
-- 对 `init` 一类会写入本机配置的命令，不要因为 skill 中出现了示例值就自动执行；只有在用户明确给出目录、URL、key、默认子目录等必要参数，或明确同意使用某个值之后，才可以执行
-- 不要把 README 或 skill 示例中的路径、账号、命名空间、默认子目录当成运行时默认值
-- 需要歧义消解时，结合 `-h`、README 和源代码决定
-- 执行后先总结结论，再补地点、时间、金额、状态、错误原因等关键信息
-- 默认不要原样倾倒 JSON；除非用户明确要求原始输出、调试信息或需要完整字段
-
-如果 CLI 返回结构化数据，要求后续 AI 把字段翻译成自然语言，而不是机械复读字段名。
-
-## 命名建议
-
-生成 skill 时，默认让 skill 名与 CLI 工具名保持一致，除非去掉 `-cli` 会明显提升可读性且不会引起歧义。
-
-frontmatter 的 `description` 要覆盖两类信息：
-
-- 工具能力范围
-- 用户可能说出的自然语言触发方式
-
-## 输出模板
-
-需要快速起草时，先查看 [references/cli-skill-template.md](references/cli-skill-template.md)。
-
-若目标 CLI 已有现成 README 和稳定 `-h`，通常只需要一个简洁的 `SKILL.md`；不必为了“完整”而增加多余文件。
+当 CLI 新增子命令、配置规则、输出格式或关键 gotcha 时，优先更新 skill 的路由与 gotcha；不要为了“完整”把正文重新膨胀成 README。
