@@ -25,6 +25,7 @@ bash scripts/install.sh
 
 ```bash
 testpage-cli --help
+testpage-cli push --help
 ```
 
 ## 初始化
@@ -55,6 +56,12 @@ testpage-cli init \
 
 ```bash
 testpage-cli config path
+```
+
+检查配置和仓库状态：
+
+```bash
+testpage-cli config check
 ```
 
 默认会写到：
@@ -118,6 +125,7 @@ https://test.720yun.com/html_test/T2Vision-demo/
 ## 行为说明
 
 - `push` 只接受目录作为输入，目录里至少要有一个 `.html` 或 `.htm` 文件
+- 正常发布时可以直接执行 `push`；如果想先排查配置，或 `push` 失败后要诊断，再运行 `testpage-cli config check`
 - `--subdir` 必须是相对路径，不能包含 `..`
 - `default_subdir` 和 `--subdir` 使用同样的路径规则
 - `--root` 和 `--subdir` 互斥；优先级为 `--root` > `--subdir` > `default_subdir` > 根目录

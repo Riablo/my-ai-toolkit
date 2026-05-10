@@ -276,6 +276,7 @@ print_main_help() {
   testpage-cli init --project-root <路径> [--base-url <URL>] [--default-subdir <相对路径>]
   testpage-cli config show
   testpage-cli config path
+  testpage-cli config check
   testpage-cli push <source-dir> [--subdir <相对路径> | --root] [--name <目录名>]
 
 说明：
@@ -300,6 +301,46 @@ print_config_help() {
 用法：
   testpage-cli config show
   testpage-cli config path
+  testpage-cli config check
+EOF
+}
+
+print_init_help() {
+  cat <<EOF
+用法：
+  testpage-cli init --project-root <路径> [--base-url <URL>] [--default-subdir <相对路径>]
+
+说明：
+  - 写入 testpage-cli 配置文件
+  - project_root 必须是本地 html_test Git 仓库
+  - base_url 默认为 ${DEFAULT_BASE_URL}
+  - default_subdir 可选，用于设置默认发布子目录
+
+示例：
+  testpage-cli init --project-root /Users/cz/Work/html_test
+  testpage-cli init --project-root /Users/cz/Work/html_test --default-subdir chenzheng
+  testpage-cli init --project-root /Users/cz/Work/html_test --base-url https://test.720yun.com/html_test/
+EOF
+}
+
+print_push_help() {
+  cat <<EOF
+用法：
+  testpage-cli push <source-dir> [--subdir <相对路径> | --root] [--name <目录名>]
+
+说明：
+  - source-dir 必须是目录，且里面至少包含一个 .html 或 .htm 文件
+  - 若未提供 --name，默认使用源目录名作为目标目录名
+  - 若未提供 --subdir 或 --root，会优先使用配置中的 default_subdir
+  - 路径优先级：--root > --subdir > default_subdir > 根目录
+  - --root 和 --subdir 互斥
+  - 发布流程包含 git fetch、pull、复制目录、commit、push
+
+示例：
+  testpage-cli push ./dist
+  testpage-cli push ./dist --name T2Vision-demo
+  testpage-cli push ./dist --subdir chenzheng --name why-html-over-markdown
+  testpage-cli push ./dist --root --name T2Vision-demo
 EOF
 }
 
@@ -326,7 +367,7 @@ cmd_init() {
         shift 2
         ;;
       -h|--help)
-        print_main_help
+        print_init_help
         return 0
         ;;
       *)
@@ -368,6 +409,17 @@ cmd_config() {
     path)
       echo "$CONFIG_PATH"
       ;;
+    check)
+      load_config
+      ensure_clean_worktree "$CONFIG_PROJECT_ROOT"
+      local branch
+      branch="$(current_branch "$CONFIG_PROJECT_ROOT")"
+      success "配置检查通过"
+      echo "project_root=${CONFIG_PROJECT_ROOT}"
+      echo "base_url=${CONFIG_BASE_URL}"
+      echo "default_subdir=${CONFIG_DEFAULT_SUBDIR}"
+      echo "branch=${branch}"
+      ;;
     -h|--help)
       print_config_help
       ;;
@@ -378,7 +430,13 @@ cmd_config() {
 }
 
 cmd_push() {
-  [ $# -ge 1 ] || die "请提供源目录。用法：testpage-cli push <source-dir> [--subdir <相对路径>] [--name <目录名>]"
+  if [ $# -eq 0 ]; then
+    die "请提供源目录。用法：testpage-cli push <source-dir> [--subdir <相对路径> | --root] [--name <目录名>]"
+  fi
+  if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    print_push_help
+    return 0
+  fi
 
   local source_arg="$1"
   shift
@@ -406,7 +464,7 @@ cmd_push() {
         shift 2
         ;;
       -h|--help)
-        print_main_help
+        print_push_help
         return 0
         ;;
       *)
