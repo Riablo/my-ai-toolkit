@@ -1,0 +1,4 @@
+interface:
+  display_name: "Web App Dockerizer"
+  short_description: "把本地 Web App 迁移到 Docker Compose"
+  default_prompt: "Use $web-app-dockerizer to migrate this project directory to Docker Compose while preserving local data and the original access URL."
