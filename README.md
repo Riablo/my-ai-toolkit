@@ -38,7 +38,7 @@ Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/s
 | [freecurrency-cli](skills/freecurrency-cli/) | 使用 `freecurrency-cli` 查询汇率、做金额换算，并检查配置与缓存 |
 | [image-prompt-tester](skills/image-prompt-tester/) | 生图测试：按指定方向测试图片提示词，或从参考图提取风格生成占位符模板，并行出图后保存到 `~/Downloads` |
 | [mosaic-notes](skills/mosaic-notes/) | 管理 Obsidian Mosaic 知识库的笔记 |
-| [my-feishu](skills/my-feishu/) | 使用 `lark-cli` 向白名单飞书群发送消息，并在失败时排查登录、身份与权限问题 |
+| [my-feishu](skills/my-feishu/) | 使用 `lark-cli` 向白名单飞书群发送消息，支持按用户名 @ 用户，并在失败时排查登录、身份与权限问题 |
 | [qweather-cli](skills/qweather-cli/) | 使用 `qweather-cli` 查询实时天气、每日预报、逐小时预报，并检查 QWeather 配置 |
 | [skill-retrospective](skills/skill-retrospective/) | 在创建、更新、重构或 review skill 时自动做反思检查，重点检查 description、README 化正文、gotcha、边界与渐进加载 |
 | [testpage-cli](skills/testpage-cli/) | 使用 `testpage-cli` 发布本地 HTML 目录到测试服务器对应的 Git 项目，并返回可访问 URL |
