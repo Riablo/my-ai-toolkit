@@ -1,54 +1,77 @@
 # Fish completions for jenkins-builder-cli
 
-# 从 config.yaml 中提取指定 section 的 key 及其 env 字段
-# 输出格式: name\tlabel · 环境  （供 Fish 补全使用）
-function __jbc_completions -a section label
+function __jbc_label_desc -a label
+    switch "$label"
+        case test
+            echo "测试服"
+        case prod
+            echo "正式服"
+        case '*'
+            echo "未分类"
+    end
+end
+
+function __jbc_emit_configured_jobs
     set -l cfg "$HOME/.config/jenkins-builder-cli/config.yaml"
     test -f "$cfg"; or return
-    set -l in_section 0
+
+    set -l in_jobs 0
     set -l key ""
-    set -l env_val ""
+    set -l label ""
+    set -l aliases_mode 0
+    set -l aliases
+
     while read -l line
-        test -z "$line"; and continue
         if not string match -q ' *' -- "$line"
-            if string match -q "$section:*" -- "$line"
-                set in_section 1
-            else if test $in_section -eq 1
-                test -n "$key"; and __jbc_emit "$key" "$env_val" "$label"
+            if test -n "$key"
+                __jbc_emit_job "$key" "$label" $aliases
+            end
+            set key ""
+            set label ""
+            set aliases
+            set aliases_mode 0
+
+            if string match -q 'jobs:*' -- "$line"
+                set in_jobs 1
+            else if test $in_jobs -eq 1
                 return
             end
             continue
         end
-        if test $in_section -eq 1
-            if set -l m (string match -rg '^  ([^ ].+):' -- "$line")
-                test -n "$key"; and __jbc_emit "$key" "$env_val" "$label"
-                set key $m
-                set env_val ""
-            else if set -l m (string match -rg '^    env: (.+)' -- "$line")
-                set env_val $m
+
+        test $in_jobs -eq 1; or continue
+
+        if set -l match (string match -rg '^  "?(.+?)"?:$' -- "$line")
+            if test -n "$key"
+                __jbc_emit_job "$key" "$label" $aliases
+            end
+            set key $match
+            set label ""
+            set aliases
+            set aliases_mode 0
+        else if set -l match (string match -rg '^    label: (.+)' -- "$line")
+            set label (string trim --chars='"' -- "$match")
+        else if string match -q '    aliases:*' -- "$line"
+            set aliases_mode 1
+        else if test $aliases_mode -eq 1
+            if set -l match (string match -rg '^    - (.+)' -- "$line")
+                set -a aliases (string trim --chars='"' -- "$match")
+            else if not string match -q '      *' -- "$line"
+                set aliases_mode 0
             end
         end
     end <"$cfg"
-    test -n "$key"; and __jbc_emit "$key" "$env_val" "$label"
+
+    test -n "$key"; and __jbc_emit_job "$key" "$label" $aliases
 end
 
-function __jbc_emit -a key env_val label
-    set -l desc $label
-    switch "$env_val"
-        case test
-            set desc "$label · 测试服"
-        case prod
-            set desc "$label · 正式服"
-    end
+function __jbc_emit_job -a key label
+    set -l desc (string join '' "Job · " (__jbc_label_desc "$label"))
     printf '%s\t%s\n' "$key" "$desc"
-end
 
-function __jbc_job_completions
-    __jbc_completions jobs Job
-end
-
-function __jbc_group_completions
-    __jbc_completions groups Group
+    for alias in $argv[3..-1]
+        printf '%s\tAlias -> %s\n' "$alias" "$key"
+    end
 end
 
 complete -c jenkins-builder-cli -f
@@ -56,7 +79,6 @@ complete -c jenkins-builder-cli -f
 # top level
 complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'config' -d '管理本地配置'
 complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'jobs' -d '列出和管理 jobs'
-complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'groups' -d '管理 job 分组'
 complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'build' -d '触发构建'
 complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'set-branch' -d '修改分支配置'
 complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'runs' -d '查看运行中的构建'
@@ -71,42 +93,26 @@ complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from config init' -l 
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from config show' -l json -d '输出 JSON'
 
 # jobs
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs' -a 'list set-meta rm-meta' -d 'jobs 子命令'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs list' -l configured -d '仅显示已配置 jobs'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs list' -l query -d '按名称/描述过滤'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs' -a 'list label unlabel alias' -d 'jobs 子命令'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs list' -l query -d '按名称/标签/别称过滤'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs list' -l json -d '输出 JSON'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs set-meta' -ka '(__jbc_job_completions)'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs set-meta' -l env -a 'test prod' -d '环境'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs set-meta' -l desc -d '描述'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs set-meta' -l keywords -d '关键词，逗号分隔'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs set-meta' -l json -d '输出 JSON'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs rm-meta' -ka '(__jbc_job_completions)'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs rm-meta' -l json -d '输出 JSON'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs label' -ka '(__jbc_emit_configured_jobs)'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs label' -a 'test prod' -d '标签'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs label' -l json -d '输出 JSON'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs unlabel' -ka '(__jbc_emit_configured_jobs)'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs unlabel' -l json -d '输出 JSON'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs alias' -a 'list add rm' -d 'alias 子命令'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs alias list' -l json -d '输出 JSON'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs alias add' -ka '(__jbc_emit_configured_jobs)'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs alias add' -l json -d '输出 JSON'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs alias rm' -ka '(__jbc_emit_configured_jobs)'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs alias rm' -l json -d '输出 JSON'
 
-# groups
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups' -a 'list set-meta rm-meta build' -d 'groups 子命令'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups list' -l json -d '输出 JSON'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups set-meta' -ka '(__jbc_group_completions)'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups set-meta' -l jobs -d '包含的 job 名称'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups set-meta' -l env -a 'test prod' -d '环境'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups set-meta' -l desc -d '描述'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups set-meta' -l keywords -d '关键词，逗号分隔'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups set-meta' -l json -d '输出 JSON'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups rm-meta' -ka '(__jbc_group_completions)'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups rm-meta' -l json -d '输出 JSON'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups build' -ka '(__jbc_group_completions)'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups build' -l follow -d '等待构建完成'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from groups build' -l json -d '输出 JSON'
-
-# build (positional: job name or group name)
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from build; and not __fish_seen_subcommand_from config jobs groups runs logs set-branch' -ka '(__jbc_job_completions)'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from build; and not __fish_seen_subcommand_from config jobs groups runs logs set-branch' -ka '(__jbc_group_completions)'
+# build / set-branch
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from build; and not __fish_seen_subcommand_from config jobs runs logs set-branch' -ka '(__jbc_emit_configured_jobs)'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from build' -l follow -d '等待构建完成'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from build' -l json -d '输出 JSON'
-
-# set-branch (positional: job name or group name)
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from set-branch' -ka '(__jbc_job_completions)'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from set-branch' -ka '(__jbc_group_completions)'
+complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from set-branch' -ka '(__jbc_emit_configured_jobs)'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from set-branch' -l json -d '输出 JSON'
 
 # runs

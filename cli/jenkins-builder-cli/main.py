@@ -43,6 +43,15 @@ CONTAINER_CLASS_MARKERS = (
     "MultiBranchProject",
     "OrganizationFolder",
 )
+LABEL_DISPLAY = {
+    "test": "测试服",
+    "prod": "正式服",
+}
+LABEL_ORDER = {
+    "test": 0,
+    "prod": 1,
+    "": 2,
+}
 
 
 class CLIError(RuntimeError):
@@ -60,20 +69,20 @@ class JobEntry:
     live_branch_specifier: str | None = None
 
     @property
-    def env(self) -> str | None:
-        return self.metadata.get("env")
+    def label(self) -> str | None:
+        label = self.metadata.get("label")
+        return label if label in LABEL_DISPLAY else None
 
     @property
-    def keywords(self) -> list[str]:
-        raw = self.metadata.get("keywords")
-        if not isinstance(raw, str) or not raw.strip():
+    def label_display(self) -> str:
+        return LABEL_DISPLAY.get(self.label or "", "未分类")
+
+    @property
+    def aliases(self) -> list[str]:
+        raw = self.metadata.get("aliases")
+        if not isinstance(raw, list):
             return []
-        return [k.strip() for k in raw.split(",") if k.strip()]
-
-    @property
-    def description(self) -> str:
-        description = self.metadata.get("description")
-        return description if isinstance(description, str) else ""
+        return [str(alias) for alias in raw if str(alias).strip()]
 
     @property
     def branch_display(self) -> str:
@@ -104,7 +113,6 @@ def default_config() -> dict[str, Any]:
             "poll_interval_seconds": DEFAULT_POLL_INTERVAL_SECONDS,
         },
         "jobs": {},
-        "groups": {},
     }
 
 
@@ -129,57 +137,30 @@ def ensure_config_shape(data: dict[str, Any] | None) -> dict[str, Any]:
             if isinstance(name, str) and isinstance(meta, dict)
         }
 
-    groups = data.get("groups")
-    if isinstance(groups, dict):
-        merged["groups"] = {
-            str(name): normalize_group_meta(meta)
-            for name, meta in groups.items()
-            if isinstance(name, str) and isinstance(meta, dict)
-        }
-
     return merged
 
 
 def normalize_job_meta(meta: dict[str, Any]) -> dict[str, Any]:
     normalized: dict[str, Any] = {}
 
-    env = meta.get("env")
-    if env in {"test", "prod"}:
-        normalized["env"] = env
+    label = meta.get("label", meta.get("env"))
+    if label in LABEL_DISPLAY:
+        normalized["label"] = label
 
-    description = meta.get("description")
-    if isinstance(description, str) and description:
-        normalized["description"] = description
+    aliases: list[str] = []
+    raw_aliases = meta.get("aliases")
+    if isinstance(raw_aliases, list):
+        aliases.extend(str(alias).strip() for alias in raw_aliases if str(alias).strip())
+    elif isinstance(raw_aliases, str) and raw_aliases.strip():
+        aliases.extend(part.strip() for part in raw_aliases.split(",") if part.strip())
 
-    keywords = meta.get("keywords")
-    if isinstance(keywords, str) and keywords.strip():
-        parts = [k.strip() for k in keywords.split(",") if k.strip()]
-        if parts:
-            normalized["keywords"] = ",".join(parts)
+    legacy_keywords = meta.get("keywords")
+    if isinstance(legacy_keywords, str) and legacy_keywords.strip():
+        aliases.extend(part.strip() for part in legacy_keywords.split(",") if part.strip())
 
-    return normalized
-
-
-def normalize_group_meta(meta: dict[str, Any]) -> dict[str, Any]:
-    normalized: dict[str, Any] = {}
-
-    jobs = meta.get("jobs")
-    if isinstance(jobs, list):
-        normalized["jobs"] = [str(j) for j in jobs if str(j).strip()]
-
-    env = meta.get("env")
-    if env in {"test", "prod"}:
-        normalized["env"] = env
-
-    description = meta.get("description")
-    if isinstance(description, str) and description:
-        normalized["description"] = description
-
-    keywords = meta.get("keywords")
-    if isinstance(keywords, str) and keywords.strip():
-        parts = [k.strip() for k in keywords.split(",") if k.strip()]
-        if parts:
-            normalized["keywords"] = ",".join(parts)
+    deduped_aliases = list(dict.fromkeys(aliases))
+    if deduped_aliases:
+        normalized["aliases"] = deduped_aliases
 
     return normalized
 
@@ -641,14 +622,16 @@ def job_entries_from_live_jobs(
             raise CLIError("获取实时分支信息时缺少 Jenkins client")
         for entry in entries:
             entry.live_branch_specifier = fetch_live_branch_specifier(client, entry.url)
-    entries.sort(key=lambda item: item.full_name.casefold())
+    entries.sort(key=job_sort_key)
     return entries
 
 
-def filter_jobs(entries: list[JobEntry], *, configured_only: bool, query: str | None) -> list[JobEntry]:
+def job_sort_key(entry: JobEntry) -> tuple[int, str]:
+    return (LABEL_ORDER.get(entry.label or "", 2), entry.full_name.casefold())
+
+
+def filter_jobs(entries: list[JobEntry], *, query: str | None) -> list[JobEntry]:
     filtered = entries
-    if configured_only:
-        filtered = [entry for entry in filtered if entry.metadata]
     if query:
         filtered = [
             entry
@@ -659,7 +642,7 @@ def filter_jobs(entries: list[JobEntry], *, configured_only: bool, query: str | 
 
 
 def query_matches_job(query: str, entry: JobEntry) -> bool:
-    haystacks = [entry.full_name, entry.description, *entry.keywords]
+    haystacks = [entry.full_name, entry.label_display, *(entry.aliases)]
     return any(contains_ci(haystack, query) for haystack in haystacks if haystack)
 
 
@@ -668,61 +651,56 @@ def resolve_job_ref(ref: str, entries: list[JobEntry]) -> JobEntry:
         if entry.full_name == ref:
             return entry
 
-    candidates = [
+    alias_candidates = [
         entry
         for entry in entries
-        if any(
-            contains_ci(haystack, ref)
-            for haystack in [entry.full_name, entry.description, *entry.keywords]
-            if haystack
-        )
+        if any(ci_equals(alias, ref) for alias in entry.aliases)
     ]
-    if not candidates:
-        raise CLIError(f"找不到 job name: {ref}")
+    if len(alias_candidates) == 1:
+        return alias_candidates[0]
+    if len(alias_candidates) > 1:
+        raise CLIError(
+            f"别称不唯一: {ref}\n"
+            "匹配到这些 job:\n"
+            + "\n".join(f"- {entry.full_name}" for entry in alias_candidates[:20])
+        )
+
+    candidates = [entry for entry in entries if contains_ci(entry.full_name, ref)]
+    if candidates:
+        raise CLIError(
+            "命令行参数只接受完整 Jenkins job name 或唯一别称。\n"
+            "可能的 job name 候选:\n"
+            + "\n".join(f"- {entry.full_name}" for entry in candidates[:20])
+        )
     raise CLIError(
-        "命令行参数只接受唯一的 Jenkins job name，不接受 keywords 或描述。\n"
-        "可能的 job name 候选:\n"
-        + "\n".join(f"- {entry.full_name}" for entry in candidates[:20])
+        f"找不到 job 或别称: {ref}\n"
+        f"可以先运行: {APP_NAME} jobs list --query \"{ref}\""
     )
 
 
-def resolve_metadata_ref(ref: str, config: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    jobs = config.get("jobs") or {}
-    if ref in jobs:
-        return ref, normalize_job_meta(jobs[ref])
-
-    candidates = []
-    for full_name, meta in jobs.items():
-        normalized = normalize_job_meta(meta)
-        kw = normalized.get("keywords", "")
-        kw_list = [k.strip() for k in kw.split(",") if k.strip()] if kw else []
-        haystacks = [full_name, normalized.get("description", ""), *kw_list]
-        if any(contains_ci(haystack, ref) for haystack in haystacks if haystack):
-            candidates.append((full_name, normalized))
-    if not candidates:
-        raise CLIError(f"找不到本地配置中的 job name: {ref}")
-    raise CLIError(
-        "命令行参数只接受唯一的 Jenkins job name，不接受 keywords 或描述。\n"
-        "可能的已配置 job name 候选:\n"
-        + "\n".join(f"- {name}" for name, _ in candidates[:20])
-    )
+def save_job_meta(config: dict[str, Any], full_name: str, meta: dict[str, Any]) -> None:
+    jobs = config.setdefault("jobs", {})
+    normalized = normalize_job_meta(meta)
+    if normalized:
+        jobs[full_name] = normalized
+    else:
+        jobs.pop(full_name, None)
 
 
 def render_jobs(entries: list[JobEntry]) -> str:
     rows = []
-    for entry in entries:
+    for index, entry in enumerate(entries, start=1):
         rows.append(
             [
-                entry.full_name,
-                entry.env or "-",
+                f"{index}. {entry.full_name}",
+                entry.label_display,
                 entry.branch_display,
-                ", ".join(entry.keywords) or "-",
-                entry.description or "-",
+                ", ".join(entry.aliases) or "-",
             ]
         )
     if not rows:
         return "没有找到任何 job。"
-    return build_cards(rows, ["JOB", "ENV", "BRANCH", "KEYWORDS", "DESCRIPTION"])
+    return build_cards(rows, ["JOB", "LABEL", "BRANCH", "ALIASES"])
 
 
 def interactive_select_job(entries: list[JobEntry]) -> JobEntry:
@@ -749,12 +727,12 @@ def numbered_jobs(entries: list[JobEntry]) -> str:
         rows.append(
             [
                 f"{index}. {entry.full_name}",
-                entry.env or "-",
+                entry.label_display,
                 entry.branch_display,
-                entry.description or "-",
+                ", ".join(entry.aliases) or "-",
             ]
         )
-    return build_cards(rows, ["", "ENV", "BRANCH", "DESCRIPTION"])
+    return build_cards(rows, ["", "LABEL", "BRANCH", "ALIASES"])
 
 
 def parse_branch_specifier(xml_text: str) -> tuple[str, ET.ElementTree, ET.Element]:
@@ -782,9 +760,9 @@ def job_info_payload(entry: JobEntry) -> dict[str, Any]:
     return {
         "full_name": entry.full_name,
         "url": entry.url,
-        "env": entry.env,
-        "description": entry.description,
-        "keywords": entry.keywords,
+        "label": entry.label,
+        "label_display": entry.label_display,
+        "aliases": entry.aliases,
         "branch_specifier": entry.live_branch_specifier,
         "buildable": entry.buildable,
         "class_name": entry.class_name,
@@ -917,7 +895,6 @@ def cmd_config_check(args: argparse.Namespace) -> None:
             "verify_ssl": bool(config["jenkins"].get("verify_ssl", DEFAULT_VERIFY_SSL)),
         },
         "jobsCount": len(config.get("jobs") or {}),
-        "groupsCount": len(config.get("groups") or {}),
     }
     print_json(payload)
 
@@ -925,171 +902,118 @@ def cmd_config_check(args: argparse.Namespace) -> None:
 def cmd_jobs_list(args: argparse.Namespace) -> None:
     config, client, entries = create_client_and_entries(with_live_branch_specs=True)
     _ = client
-    filtered = filter_jobs(entries, configured_only=args.configured, query=args.query)
+    filtered = filter_jobs(entries, query=args.query)
     if args.json:
         print_json([job_info_payload(entry) for entry in filtered])
         return
     print(render_jobs(filtered))
 
 
-def cmd_jobs_set_meta(args: argparse.Namespace) -> None:
+def cmd_jobs_label(args: argparse.Namespace) -> None:
     config, _, entries = create_client_and_entries()
     entry = resolve_job_ref(args.job_ref, entries)
-    jobs = config.setdefault("jobs", {})
-    existing = normalize_job_meta(jobs.get(entry.full_name) or {})
-
-    if args.env is None and args.desc is None and args.keywords is None:
-        raise CLIError("至少提供一个元数据参数: --env / --desc / --keywords")
-
-    description = existing.get("description")
-    if args.desc is not None:
-        description = args.desc
-
-    keywords = existing.get("keywords", "")
-    if args.keywords is not None:
-        keywords = args.keywords
-
-    meta: dict[str, Any] = {}
-    env = args.env or existing.get("env")
-    if env in {"test", "prod"}:
-        meta["env"] = env
-    if description:
-        meta["description"] = description
-    if keywords:
-        meta["keywords"] = keywords
-
-    if meta:
-        jobs[entry.full_name] = normalize_job_meta(meta)
-        payload = {"job": entry.full_name, **jobs[entry.full_name]}
-    else:
-        jobs.pop(entry.full_name, None)
-        payload = {"job": entry.full_name, "removed": True}
-
+    meta = normalize_job_meta(config.setdefault("jobs", {}).get(entry.full_name) or {})
+    meta["label"] = args.label
+    save_job_meta(config, entry.full_name, meta)
     save_config(config)
 
+    payload = {"job": entry.full_name, **normalize_job_meta(config["jobs"][entry.full_name])}
     if args.json:
         print_json(payload)
         return
-    print("已更新 job 元数据:")
+    print("已更新 job 标签:")
     print(yaml_dump(payload))
 
 
-def cmd_jobs_rm_meta(args: argparse.Namespace) -> None:
-    config = load_config(required=False)
-    full_name, _ = resolve_metadata_ref(args.job_ref, config)
-    config.setdefault("jobs", {}).pop(full_name, None)
-    save_config(config)
-    if args.json:
-        print_json({"removed": full_name})
-        return
-    print(f"已删除本地元数据: {full_name}")
-
-
-def resolve_group_jobs(ref: str, config: dict[str, Any], entries: list[JobEntry]) -> list[JobEntry]:
-    """If *ref* matches a group name, return the resolved entries for that group's jobs.
-    Otherwise return ``None`` so the caller can fall back to single-job resolution."""
-    groups = config.get("groups") or {}
-    if ref not in groups:
-        return []
-    group = normalize_group_meta(groups[ref])
-    job_names = group.get("jobs") or []
-    if not job_names:
-        raise CLIError(f"group '{ref}' 没有配置任何 jobs")
-    return [resolve_job_ref(name, entries) for name in job_names]
-
-
-def cmd_groups_list(args: argparse.Namespace) -> None:
-    config = load_config(required=False)
-    groups = config.get("groups") or {}
-    if args.json:
-        print_json(groups)
-        return
-    if not groups:
-        print("没有配置任何 group。")
-        return
-    rows = []
-    for name, meta in sorted(groups.items()):
-        normalized = normalize_group_meta(meta)
-        rows.append([
-            name,
-            normalized.get("env") or "-",
-            normalized.get("keywords") or "-",
-            ", ".join(normalized.get("jobs") or []) or "-",
-            normalized.get("description") or "-",
-        ])
-    print(build_cards(rows, ["GROUP", "ENV", "KEYWORDS", "JOBS", "DESCRIPTION"]))
-
-
-def cmd_groups_set_meta(args: argparse.Namespace) -> None:
-    config = load_config(required=False)
-    groups = config.setdefault("groups", {})
-    existing = normalize_group_meta(groups.get(args.group_name) or {})
-
-    if args.env is None and args.desc is None and args.keywords is None and args.jobs is None:
-        raise CLIError("至少提供一个参数: --env / --desc / --keywords / --jobs")
-
-    meta: dict[str, Any] = {}
-
-    env = args.env or existing.get("env")
-    if env in {"test", "prod"}:
-        meta["env"] = env
-
-    description = args.desc if args.desc is not None else existing.get("description")
-    if description:
-        meta["description"] = description
-
-    keywords = args.keywords if args.keywords is not None else existing.get("keywords")
-    if keywords:
-        meta["keywords"] = keywords
-
-    jobs_list = args.jobs if args.jobs is not None else existing.get("jobs")
-    if jobs_list:
-        meta["jobs"] = jobs_list
-
-    if meta:
-        groups[args.group_name] = normalize_group_meta(meta)
-        payload = {"group": args.group_name, **groups[args.group_name]}
-    else:
-        groups.pop(args.group_name, None)
-        payload = {"group": args.group_name, "removed": True}
-
+def cmd_jobs_unlabel(args: argparse.Namespace) -> None:
+    config, _, entries = create_client_and_entries()
+    entry = resolve_job_ref(args.job_ref, entries)
+    meta = normalize_job_meta(config.setdefault("jobs", {}).get(entry.full_name) or {})
+    meta.pop("label", None)
+    save_job_meta(config, entry.full_name, meta)
     save_config(config)
 
+    payload = {"job": entry.full_name, "label": None}
     if args.json:
         print_json(payload)
         return
-    print("已更新 group 元数据:")
+    print(f"已移除 job 标签: {entry.full_name}")
+
+
+def alias_owners(config: dict[str, Any], alias: str) -> list[str]:
+    owners = []
+    for full_name, meta in (config.get("jobs") or {}).items():
+        normalized = normalize_job_meta(meta)
+        if any(ci_equals(existing, alias) for existing in normalized.get("aliases", [])):
+            owners.append(full_name)
+    return owners
+
+
+def cmd_jobs_alias_list(args: argparse.Namespace) -> None:
+    config = load_config(required=False)
+    items = []
+    for full_name, meta in sorted((config.get("jobs") or {}).items()):
+        normalized = normalize_job_meta(meta)
+        aliases = normalized.get("aliases") or []
+        if aliases:
+            items.append({"job": full_name, "aliases": aliases})
+
+    if args.json:
+        print_json(items)
+        return
+    if not items:
+        print("没有配置任何 job 别称。")
+        return
+    print(build_cards([[item["job"], ", ".join(item["aliases"])] for item in items], ["JOB", "ALIASES"]))
+
+
+def cmd_jobs_alias_add(args: argparse.Namespace) -> None:
+    config, _, entries = create_client_and_entries()
+    entry = resolve_job_ref(args.job_ref, entries)
+    alias = args.alias.strip()
+    if not alias:
+        raise CLIError("别称不能为空")
+
+    owners = [owner for owner in alias_owners(config, alias) if owner != entry.full_name]
+    if owners:
+        raise CLIError(
+            f"别称已被其他 job 使用: {alias}\n"
+            + "\n".join(f"- {owner}" for owner in owners[:20])
+        )
+
+    meta = normalize_job_meta(config.setdefault("jobs", {}).get(entry.full_name) or {})
+    aliases = meta.setdefault("aliases", [])
+    if not any(ci_equals(existing, alias) for existing in aliases):
+        aliases.append(alias)
+    save_job_meta(config, entry.full_name, meta)
+    save_config(config)
+
+    payload = {"job": entry.full_name, **normalize_job_meta(config["jobs"][entry.full_name])}
+    if args.json:
+        print_json(payload)
+        return
+    print("已添加 job 别称:")
     print(yaml_dump(payload))
 
 
-def cmd_groups_rm_meta(args: argparse.Namespace) -> None:
-    config = load_config(required=False)
-    groups = config.setdefault("groups", {})
-    name = args.group_name
-    if name not in groups:
-        raise CLIError(f"找不到 group: {name}")
-    groups.pop(name, None)
+def cmd_jobs_alias_rm(args: argparse.Namespace) -> None:
+    config, _, entries = create_client_and_entries()
+    entry = resolve_job_ref(args.job_ref, entries)
+    alias = args.alias.strip()
+    meta = normalize_job_meta(config.setdefault("jobs", {}).get(entry.full_name) or {})
+    aliases = [existing for existing in meta.get("aliases", []) if not ci_equals(existing, alias)]
+    if aliases:
+        meta["aliases"] = aliases
+    else:
+        meta.pop("aliases", None)
+    save_job_meta(config, entry.full_name, meta)
     save_config(config)
+
+    payload = {"job": entry.full_name, "removed_alias": alias}
     if args.json:
-        print_json({"removed": name})
+        print_json(payload)
         return
-    print(f"已删除 group: {name}")
-
-
-def cmd_groups_build(args: argparse.Namespace) -> None:
-    config, client, entries = create_client_and_entries()
-    targets = resolve_group_jobs(args.group_name, config, entries)
-    if not targets:
-        raise CLIError(f"找不到 group: {args.group_name}")
-
-    results = _trigger_and_collect(client, config, targets, follow=args.follow)
-
-    if args.json:
-        print_json(results)
-        return
-    for r in results:
-        print("构建已触发:")
-        print(yaml_dump(r))
+    print(f"已删除 job 别称: {entry.full_name} -> {alias}")
 
 
 def update_branch_specifier(
@@ -1112,20 +1036,16 @@ def update_branch_specifier(
 
 def cmd_set_branch(args: argparse.Namespace) -> None:
     config, client, entries = create_client_and_entries()
-    group_entries = resolve_group_jobs(args.ref, config, entries)
-    targets = group_entries if group_entries else [resolve_job_ref(args.ref, entries)]
+    _ = config
+    entry = resolve_job_ref(args.ref, entries)
 
-    results = []
-    for entry in targets:
-        payload = update_branch_specifier(client, entry, args.branch)
-        results.append(payload)
+    payload = update_branch_specifier(client, entry, args.branch)
 
     if args.json:
-        print_json(results if len(results) > 1 else results[0])
+        print_json(payload)
         return
-    for r in results:
-        print("已更新 Jenkins 分支配置:")
-        print(yaml_dump(r))
+    print("已更新 Jenkins 分支配置:")
+    print(yaml_dump(payload))
 
 
 def maybe_follow_build(
@@ -1175,8 +1095,7 @@ def cmd_build(args: argparse.Namespace) -> None:
     config, client, entries = create_client_and_entries(with_live_branch_specs=args.ref is None)
 
     if args.ref:
-        group_entries = resolve_group_jobs(args.ref, config, entries)
-        targets = group_entries if group_entries else [resolve_job_ref(args.ref, entries)]
+        targets = [resolve_job_ref(args.ref, entries)]
     else:
         print(numbered_jobs(entries))
         print("")
@@ -1323,59 +1242,48 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_subparsers = jobs_parser.add_subparsers(dest="jobs_command", required=True)
 
     jobs_list = jobs_subparsers.add_parser("list", help="列出可构建 jobs")
-    jobs_list.add_argument("--configured", action="store_true", help="仅显示已配置本地元数据的 jobs")
-    jobs_list.add_argument("--query", help="按名称、关键词或描述过滤")
+    jobs_list.add_argument("--query", help="按 job 名称、标签或别称过滤")
     jobs_list.add_argument("--json", action="store_true", help="输出 JSON")
     jobs_list.set_defaults(func=cmd_jobs_list)
 
-    jobs_set_meta = jobs_subparsers.add_parser("set-meta", help="设置某个 job 的本地元数据")
-    jobs_set_meta.add_argument("job_ref", help="Jenkins job 名称（唯一 ID）")
-    jobs_set_meta.add_argument("--env", choices=["test", "prod"], help="环境")
-    jobs_set_meta.add_argument("--desc", help="描述")
-    jobs_set_meta.add_argument("--keywords", help="关键词，逗号分隔")
-    jobs_set_meta.add_argument("--json", action="store_true", help="输出 JSON")
-    jobs_set_meta.set_defaults(func=cmd_jobs_set_meta)
+    jobs_label = jobs_subparsers.add_parser("label", help="标注 job 为测试服或正式服")
+    jobs_label.add_argument("job_ref", help="Jenkins job 名称或唯一别称")
+    jobs_label.add_argument("label", choices=["test", "prod"], help="标签")
+    jobs_label.add_argument("--json", action="store_true", help="输出 JSON")
+    jobs_label.set_defaults(func=cmd_jobs_label)
 
-    jobs_rm_meta = jobs_subparsers.add_parser("rm-meta", help="删除某个 job 的本地元数据")
-    jobs_rm_meta.add_argument("job_ref", help="Jenkins job 名称（唯一 ID）")
-    jobs_rm_meta.add_argument("--json", action="store_true", help="输出 JSON")
-    jobs_rm_meta.set_defaults(func=cmd_jobs_rm_meta)
+    jobs_unlabel = jobs_subparsers.add_parser("unlabel", help="移除 job 标签")
+    jobs_unlabel.add_argument("job_ref", help="Jenkins job 名称或唯一别称")
+    jobs_unlabel.add_argument("--json", action="store_true", help="输出 JSON")
+    jobs_unlabel.set_defaults(func=cmd_jobs_unlabel)
 
-    groups_parser = subparsers.add_parser("groups", help="管理 job 分组")
-    groups_subparsers = groups_parser.add_subparsers(dest="groups_command", required=True)
+    jobs_alias = jobs_subparsers.add_parser("alias", help="管理 job 别称")
+    jobs_alias_subparsers = jobs_alias.add_subparsers(dest="jobs_alias_command", required=True)
 
-    groups_list = groups_subparsers.add_parser("list", help="列出所有 groups")
-    groups_list.add_argument("--json", action="store_true", help="输出 JSON")
-    groups_list.set_defaults(func=cmd_groups_list)
+    jobs_alias_list = jobs_alias_subparsers.add_parser("list", help="列出 job 别称")
+    jobs_alias_list.add_argument("--json", action="store_true", help="输出 JSON")
+    jobs_alias_list.set_defaults(func=cmd_jobs_alias_list)
 
-    groups_set_meta = groups_subparsers.add_parser("set-meta", help="设置 group 元数据")
-    groups_set_meta.add_argument("group_name", help="Group 名称")
-    groups_set_meta.add_argument("--jobs", nargs="+", help="包含的 job 名称列表")
-    groups_set_meta.add_argument("--env", choices=["test", "prod"], help="环境")
-    groups_set_meta.add_argument("--desc", help="描述")
-    groups_set_meta.add_argument("--keywords", help="关键词，逗号分隔")
-    groups_set_meta.add_argument("--json", action="store_true", help="输出 JSON")
-    groups_set_meta.set_defaults(func=cmd_groups_set_meta)
+    jobs_alias_add = jobs_alias_subparsers.add_parser("add", help="添加 job 别称")
+    jobs_alias_add.add_argument("job_ref", help="Jenkins job 名称或唯一别称")
+    jobs_alias_add.add_argument("alias", help="别称")
+    jobs_alias_add.add_argument("--json", action="store_true", help="输出 JSON")
+    jobs_alias_add.set_defaults(func=cmd_jobs_alias_add)
 
-    groups_rm_meta = groups_subparsers.add_parser("rm-meta", help="删除 group")
-    groups_rm_meta.add_argument("group_name", help="Group 名称")
-    groups_rm_meta.add_argument("--json", action="store_true", help="输出 JSON")
-    groups_rm_meta.set_defaults(func=cmd_groups_rm_meta)
+    jobs_alias_rm = jobs_alias_subparsers.add_parser("rm", help="删除 job 别称")
+    jobs_alias_rm.add_argument("job_ref", help="Jenkins job 名称或唯一别称")
+    jobs_alias_rm.add_argument("alias", help="别称")
+    jobs_alias_rm.add_argument("--json", action="store_true", help="输出 JSON")
+    jobs_alias_rm.set_defaults(func=cmd_jobs_alias_rm)
 
-    groups_build = groups_subparsers.add_parser("build", help="触发 group 内所有 jobs 构建")
-    groups_build.add_argument("group_name", help="Group 名称")
-    groups_build.add_argument("--follow", action="store_true", help="等待构建完成")
-    groups_build.add_argument("--json", action="store_true", help="输出 JSON")
-    groups_build.set_defaults(func=cmd_groups_build)
-
-    build_parser_ = subparsers.add_parser("build", help="触发构建（支持 job 名称或 group 名称）")
-    build_parser_.add_argument("ref", nargs="?", help="Jenkins job 名称或 group 名称")
+    build_parser_ = subparsers.add_parser("build", help="触发构建")
+    build_parser_.add_argument("ref", nargs="?", help="Jenkins job 名称或唯一别称")
     build_parser_.add_argument("--follow", action="store_true", help="等待构建完成")
     build_parser_.add_argument("--json", action="store_true", help="输出 JSON")
     build_parser_.set_defaults(func=cmd_build)
 
-    set_branch_parser = subparsers.add_parser("set-branch", help="修改 Jenkins Git Branch Specifier（支持 job 名称或 group 名称）")
-    set_branch_parser.add_argument("ref", help="Jenkins job 名称或 group 名称")
+    set_branch_parser = subparsers.add_parser("set-branch", help="修改 Jenkins Git Branch Specifier")
+    set_branch_parser.add_argument("ref", help="Jenkins job 名称或唯一别称")
     set_branch_parser.add_argument("branch", help="目标分支名称")
     set_branch_parser.add_argument("--json", action="store_true", help="输出 JSON")
     set_branch_parser.set_defaults(func=cmd_set_branch)

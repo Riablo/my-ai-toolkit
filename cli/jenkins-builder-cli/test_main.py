@@ -40,7 +40,7 @@ class JenkinsBuilderCliTests(unittest.TestCase):
         with self.assertRaises(MODULE.CLIError):
             MODULE.parse_run_id("folder/api")
 
-    def test_resolve_job_ref_requires_exact_job_name(self) -> None:
+    def test_resolve_job_ref_accepts_exact_job_name_and_alias(self) -> None:
         entries = [
             MODULE.JobEntry(
                 full_name="folder/frontend-build",
@@ -49,9 +49,8 @@ class JenkinsBuilderCliTests(unittest.TestCase):
                 color="blue",
                 buildable=True,
                 metadata={
-                    "env": "test",
-                    "description": "测试服前端项目",
-                    "keywords": "前端测试服",
+                    "label": "test",
+                    "aliases": ["前端测试服", "frontend test"],
                 },
             ),
             MODULE.JobEntry(
@@ -61,17 +60,16 @@ class JenkinsBuilderCliTests(unittest.TestCase):
                 color="blue",
                 buildable=True,
                 metadata={
-                    "env": "prod",
-                    "description": "正式服前端项目",
-                    "keywords": "前端正式服",
+                    "label": "prod",
+                    "aliases": ["前端正式服", "frontend prod"],
                 },
             ),
         ]
 
         matched = MODULE.resolve_job_ref("folder/frontend-build", entries)
         self.assertEqual(matched.full_name, "folder/frontend-build")
-        with self.assertRaises(MODULE.CLIError):
-            MODULE.resolve_job_ref("前端测试服", entries)
+        matched = MODULE.resolve_job_ref("前端测试服", entries)
+        self.assertEqual(matched.full_name, "folder/frontend-build")
 
     def test_resolve_job_ref_rejects_non_exact_name(self) -> None:
         entries = [
@@ -81,7 +79,7 @@ class JenkinsBuilderCliTests(unittest.TestCase):
                 class_name="hudson.model.FreeStyleProject",
                 color="blue",
                 buildable=True,
-                metadata={"description": "前端 build"},
+                metadata={},
             ),
             MODULE.JobEntry(
                 full_name="folder/frontend-release",
@@ -89,12 +87,62 @@ class JenkinsBuilderCliTests(unittest.TestCase):
                 class_name="hudson.model.FreeStyleProject",
                 color="blue",
                 buildable=True,
-                metadata={"description": "前端 release"},
+                metadata={},
             ),
         ]
 
         with self.assertRaises(MODULE.CLIError):
             MODULE.resolve_job_ref("frontend", entries)
+
+    def test_resolve_job_ref_rejects_ambiguous_alias(self) -> None:
+        entries = [
+            MODULE.JobEntry(
+                full_name="folder/frontend-build",
+                url="https://jenkins/job/folder/job/frontend-build",
+                class_name="hudson.model.FreeStyleProject",
+                color="blue",
+                buildable=True,
+                metadata={"aliases": ["前端"]},
+            ),
+            MODULE.JobEntry(
+                full_name="folder/frontend-release",
+                url="https://jenkins/job/folder/job/frontend-release",
+                class_name="hudson.model.FreeStyleProject",
+                color="blue",
+                buildable=True,
+                metadata={"aliases": ["前端"]},
+            ),
+        ]
+
+        with self.assertRaises(MODULE.CLIError):
+            MODULE.resolve_job_ref("前端", entries)
+
+    def test_normalize_job_meta_supports_new_and_legacy_config(self) -> None:
+        self.assertEqual(
+            MODULE.normalize_job_meta(
+                {
+                    "label": "prod",
+                    "aliases": ["前端正式", "frontend prod"],
+                    "description": "旧描述不再保留",
+                }
+            ),
+            {
+                "label": "prod",
+                "aliases": ["前端正式", "frontend prod"],
+            },
+        )
+        self.assertEqual(
+            MODULE.normalize_job_meta(
+                {
+                    "env": "test",
+                    "keywords": "前端测试, frontend test",
+                }
+            ),
+            {
+                "label": "test",
+                "aliases": ["前端测试", "frontend test"],
+            },
+        )
 
     def test_parse_branch_specifier(self) -> None:
         xml_text = """<?xml version='1.1' encoding='UTF-8'?>
