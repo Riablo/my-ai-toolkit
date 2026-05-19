@@ -52,6 +52,9 @@ pingcode-cli bugs
 ```bash
 # 列出我的未解决缺陷
 pingcode-cli bugs
+pingcode-cli bugs 100
+pingcode-cli bugs --debug
+pingcode-cli bugs --json
 
 # 修改缺陷状态
 pingcode-cli set-state 720YUN-10515 已修复
@@ -66,6 +69,10 @@ pingcode-cli config check
 
 # Cookie 过期后重新初始化
 pingcode-cli config init
+
+# 查看帮助
+pingcode-cli -h
+pingcode-cli config -h
 ```
 
 ## 注意事项

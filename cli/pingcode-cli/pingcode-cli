@@ -207,10 +207,24 @@ api_post() {
 # ─── bugs 命令 ─────────────────────────────────────────────────────
 cmd_bugs() {
   local debug=0
+  local json=0
+  local page_size=50
+  local has_page_size=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --debug) debug=1; shift ;;
-      *) break ;;
+      --json) json=1; shift ;;
+      -*)
+        die "未知 bugs 选项：$1。使用 pingcode-cli bugs -h 查看帮助。"
+        ;;
+      *)
+        if [ "$has_page_size" -eq 1 ]; then
+          die "只能指定一个数量参数。使用 pingcode-cli bugs -h 查看帮助。"
+        fi
+        page_size="$1"
+        has_page_size=1
+        shift
+        ;;
     esac
   done
 
@@ -231,8 +245,6 @@ cmd_bugs() {
     state_json="$(echo "$state_ids" | tr ',' '\n' | sed 's/.*/"&"/' | paste -sd',' - | sed 's/^/[/;s/$/]/')"
   fi
 
-  local page_size="${1:-50}"
-
   local payload
   payload=$(cat <<ENDJSON
 {"addon_setting_id":"${addon_setting_id}","criteria":{"search":{"keywords":"","scopes":["identifier","title"]},"condition_logic":1,"sort_by":"identifier","sort_direction":1,"conditions":[{"operation":6,"property_key":"assignee","value":[{"id":"00000000000000000000000000000000","type":1}],"logic":1},{"operation":6,"property_key":"state_id","value":${state_json},"logic":1},{"operation":4,"property_key":"created_at","value":${created_after},"logic":1}],"mode":1,"pql":"","pql_snapshot":{},"group_by":"","show_type":2,"sort_type":1},"columns":["identifier","title","state_id","priority","assignee","parent_id","severity","reappear_probability","created_at"],"is_brief":1,"pi":0,"ps":${page_size}}
@@ -241,7 +253,9 @@ ENDJSON
 
   local endpoint="/api/agile/projects/${project_id}/defect/views/${view_id}/content"
 
-  echo -e "${DIM}正在获取缺陷列表...${RESET}"
+  if [ "$json" -eq 0 ]; then
+    echo -e "${DIM}正在获取缺陷列表...${RESET}"
+  fi
 
   local response
   response="$(api_post "$endpoint" "$payload")" || {
@@ -251,9 +265,11 @@ ENDJSON
   }
 
   if [ "$debug" -eq 1 ]; then
-    echo -e "${BOLD}原始响应：${RESET}"
-    echo "$response" | python3 -m json.tool 2>/dev/null || echo "$response"
-    echo ""
+    {
+      echo -e "${BOLD}原始响应：${RESET}"
+      echo "$response" | python3 -m json.tool 2>/dev/null || echo "$response"
+      echo ""
+    } >&2
   fi
 
   # 缓存响应（供 set-state 等命令使用）
@@ -263,7 +279,7 @@ ENDJSON
   base_url="$(config_get base_url)"
 
   # 解析并展示
-  echo "$response" | STATE_NAMES="$(declare -p STATE_NAME_MAP)" python3 -c "
+  echo "$response" | OUTPUT_JSON="$json" BASE_URL="$base_url" STATE_NAMES="$(declare -p STATE_NAME_MAP)" python3 -c "
 import json, sys, os, re
 
 data = json.load(sys.stdin)
@@ -278,6 +294,36 @@ env = os.environ.get('STATE_NAMES', '')
 for m in re.finditer(r'\[([^\]]+)\]=(\S+)', env):
     state_names[m.group(1)] = m.group(2).strip('\"')
 
+base_url = os.environ.get('BASE_URL', '').rstrip('/')
+output_json = os.environ.get('OUTPUT_JSON') == '1'
+
+if output_json:
+    result = {
+        'total': total,
+        'items': []
+    }
+    for item in items:
+        short_id = item.get('short_id', item.get('identifier', ''))
+        state_id = item.get('state_id', '')
+        result['items'].append({
+            'id': item.get('_id', ''),
+            'short_id': short_id,
+            'identifier': item.get('identifier', ''),
+            'whole_identifier': item.get('whole_identifier', ''),
+            'title': item.get('title', ''),
+            'state_id': state_id,
+            'state_name': state_names.get(state_id, state_id[:8]),
+            'priority': item.get('priority'),
+            'assignee': item.get('assignee'),
+            'parent_id': item.get('parent_id'),
+            'severity': item.get('severity'),
+            'reappear_probability': item.get('reappear_probability'),
+            'created_at': item.get('created_at'),
+            'url': f'{base_url}/pjm/workitems/{short_id}' if base_url and short_id else ''
+        })
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    sys.exit(0)
+
 if not items:
     print('没有找到缺陷。')
     sys.exit(0)
@@ -291,7 +337,7 @@ for item in items:
     whole_id = item.get('whole_identifier', '')
     state_id = item.get('state_id', '')
     state_name = state_names.get(state_id, state_id[:8])
-    url = '${base_url}/pjm/workitems/' + str(short_id)
+    url = base_url + '/pjm/workitems/' + str(short_id)
     print(f'  \033[36m{whole_id:<18}\033[0m \033[33m{state_name:<8}\033[0m {title}')
     print(f'  \033[2m{url}\033[0m')
     print()
@@ -448,29 +494,108 @@ ${BOLD}选项：${RESET}
 
 ${BOLD}示例：${RESET}
   pingcode-cli bugs                              # 列出未解决缺陷
+  pingcode-cli bugs --json                       # 以 JSON 格式输出缺陷列表
   pingcode-cli set-state 720YUN-10515 已修复      # 标记为已修复
   pingcode-cli set-state CFzSq6-n 处理中          # 标记为处理中
   pingcode-cli config init                        # 重新初始化配置"
+}
+
+usage_bugs() {
+  echo -e "${BOLD}pingcode-cli bugs${RESET} - 列出我的未解决缺陷
+
+${BOLD}用法：${RESET}
+  pingcode-cli bugs [--debug] [--json] [数量]
+
+${BOLD}参数：${RESET}
+  数量            每页返回数量，默认 50
+
+${BOLD}选项：${RESET}
+  --debug         打印原始 API 响应
+  --json          以 JSON 格式输出缺陷列表
+  -h, --help      显示此帮助信息
+
+${BOLD}示例：${RESET}
+  pingcode-cli bugs
+  pingcode-cli bugs 100
+  pingcode-cli bugs --json
+  pingcode-cli bugs --debug"
+}
+
+usage_set_state() {
+  echo -e "${BOLD}pingcode-cli set-state${RESET} - 修改缺陷状态
+
+${BOLD}用法：${RESET}
+  pingcode-cli set-state <缺陷编号> <状态>
+
+${BOLD}缺陷编号：${RESET}
+  short_id（如 CFzSq6-n）或 whole_identifier（如 720YUN-10515）
+
+${BOLD}可用状态：${RESET}
+  待处理  处理中  已修复  重新打开  挂起
+
+${BOLD}选项：${RESET}
+  -h, --help      显示此帮助信息
+
+${BOLD}示例：${RESET}
+  pingcode-cli set-state 720YUN-10515 已修复
+  pingcode-cli set-state CFzSq6-n 处理中"
+}
+
+usage_config() {
+  echo -e "${BOLD}pingcode-cli config${RESET} - 管理配置
+
+${BOLD}用法：${RESET}
+  pingcode-cli config [子命令]
+
+${BOLD}子命令：${RESET}
+  show            查看当前配置（默认）
+  init            初始化或重新初始化配置
+  edit            用 \$EDITOR 编辑配置文件
+  path            输出配置文件路径
+  check           检查配置是否可用
+
+${BOLD}选项：${RESET}
+  -h, --help      显示此帮助信息
+
+${BOLD}示例：${RESET}
+  pingcode-cli config show
+  pingcode-cli config init
+  pingcode-cli config edit
+  pingcode-cli config path
+  pingcode-cli config check"
+}
+
+is_help() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      -h|--help) return 0 ;;
+    esac
+  done
+  return 1
 }
 
 # ─── 主入口 ──────────────────────────────────────────────────────
 case "${1:-}" in
   bugs)
     shift
-    case "${1:-}" in -h|--help) usage; exit 0;; esac
+    if is_help "$@"; then usage_bugs; exit 0; fi
     cmd_bugs "$@"
     ;;
   set-state)
     shift
-    case "${1:-}" in -h|--help) cmd_set_state; exit 0;; esac
+    if is_help "$@"; then usage_set_state; exit 0; fi
     cmd_set_state "$@"
     ;;
   config)
     shift
-    case "${1:-}" in -h|--help) usage; exit 0;; esac
+    if is_help "$@"; then usage_config; exit 0; fi
     cmd_config "$@"
     ;;
-  -h|--help|"")
+  -h|--help)
+    usage
+    ;;
+  "")
     usage
     ;;
   *)
