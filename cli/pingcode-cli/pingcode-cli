@@ -14,12 +14,13 @@ RESET='\033[0m'
 CONFIG_DIR="${HOME}/.config/pingcode-cli"
 CONFIG_FILE="${CONFIG_DIR}/config"
 CACHE_FILE="${CONFIG_DIR}/bugs_cache.json"
+DEFAULT_CREATED_AFTER=1577808000
 
 die() { echo -e "${RED}错误：$1${RESET}" >&2; exit 1; }
 
 config_get() {
   local key="$1"
-  grep -E "^${key}=" "$CONFIG_FILE" 2>/dev/null | head -1 | sed "s/^${key}=//"
+  grep -E "^${key}=" "$CONFIG_FILE" 2>/dev/null | head -1 | sed "s/^${key}=//" || true
 }
 
 validate_config_file() {
@@ -37,6 +38,12 @@ validate_config_file() {
 
   if [ ${#missing[@]} -gt 0 ]; then
     die "配置文件缺少以下字段：${missing[*]}\n请编辑 ${CONFIG_FILE} 补全配置，或删除后重新初始化。"
+  fi
+
+  local created_after
+  created_after="$(config_get created_after)"
+  if [ -n "$created_after" ] && ! [[ "$created_after" =~ ^[0-9]+$ ]]; then
+    die "配置字段 created_after 必须是 Unix 时间戳秒数：${created_after}"
   fi
 }
 
@@ -128,6 +135,11 @@ init_config() {
   state_ids="$(echo "$curl_text" | grep -oE '"state_id".*?\]' | grep -oE '[a-f0-9]{24}' | paste -sd',' -)"
   state_ids="${state_ids:-5f3a1c2fc2742c538a7dcbcb,5f3a1c2fc2742c17f27dcbce}"
 
+  # 解析 created_at 起始时间。旧版本曾硬编码为 2025-01-01，容易把历史缺陷过滤掉。
+  local created_after
+  created_after="$(printf "%s" "$curl_text" | perl -0ne 'if (/"property_key"\s*:\s*"created_at".*?"value"\s*:\s*([0-9]+)/s) { print $1; exit }')"
+  created_after="${created_after:-$DEFAULT_CREATED_AFTER}"
+
   echo ""
   echo -e "${BOLD}解析结果：${RESET}"
   echo -e "  ${CYAN}base_url${RESET}=${base_url}"
@@ -136,6 +148,7 @@ init_config() {
   echo -e "  ${CYAN}session_cookie${RESET}=****（已隐藏）"
   echo -e "  ${CYAN}addon_setting_id${RESET}=${addon_setting_id}"
   echo -e "  ${CYAN}state_ids${RESET}=${state_ids}"
+  echo -e "  ${CYAN}created_after${RESET}=${created_after}"
 
   cat > "$CONFIG_FILE" <<EOF
 # PingCode CLI 配置文件
@@ -151,6 +164,8 @@ view_id=${view_id}
 state_ids=${state_ids}
 # addon_setting_id
 addon_setting_id=${addon_setting_id}
+# 创建时间起点（Unix 时间戳秒数）
+created_after=${created_after}
 EOF
 
   chmod 600 "$CONFIG_FILE"
@@ -201,11 +216,14 @@ cmd_bugs() {
 
   ensure_config
 
-  local project_id view_id addon_setting_id state_ids
+  local project_id view_id addon_setting_id state_ids created_after
   project_id="$(config_get project_id)"
   view_id="$(config_get view_id)"
   addon_setting_id="$(config_get addon_setting_id)"
   state_ids="$(config_get state_ids)"
+  created_after="$(config_get created_after)"
+  created_after="${created_after:-$DEFAULT_CREATED_AFTER}"
+  [[ "$created_after" =~ ^[0-9]+$ ]] || die "配置字段 created_after 必须是 Unix 时间戳秒数：${created_after}"
 
   # 构建 state_id 条件的 JSON 数组
   local state_json="[]"
@@ -217,7 +235,7 @@ cmd_bugs() {
 
   local payload
   payload=$(cat <<ENDJSON
-{"addon_setting_id":"${addon_setting_id}","criteria":{"search":{"keywords":"","scopes":["identifier","title"]},"condition_logic":1,"sort_by":"identifier","sort_direction":1,"conditions":[{"operation":6,"property_key":"assignee","value":[{"id":"00000000000000000000000000000000","type":1}],"logic":1},{"operation":6,"property_key":"state_id","value":${state_json},"logic":1},{"operation":4,"property_key":"created_at","value":1735660800,"logic":1}],"mode":1,"pql":"","pql_snapshot":{},"group_by":"","show_type":2,"sort_type":1},"columns":["identifier","title","state_id","priority","assignee","parent_id","severity","reappear_probability","created_at"],"is_brief":1,"pi":0,"ps":${page_size}}
+{"addon_setting_id":"${addon_setting_id}","criteria":{"search":{"keywords":"","scopes":["identifier","title"]},"condition_logic":1,"sort_by":"identifier","sort_direction":1,"conditions":[{"operation":6,"property_key":"assignee","value":[{"id":"00000000000000000000000000000000","type":1}],"logic":1},{"operation":6,"property_key":"state_id","value":${state_json},"logic":1},{"operation":4,"property_key":"created_at","value":${created_after},"logic":1}],"mode":1,"pql":"","pql_snapshot":{},"group_by":"","show_type":2,"sort_type":1},"columns":["identifier","title","state_id","priority","assignee","parent_id","severity","reappear_probability","created_at"],"is_brief":1,"pi":0,"ps":${page_size}}
 ENDJSON
 )
 
@@ -258,7 +276,7 @@ total = inner.get('total_count', len(items))
 state_names = {}
 env = os.environ.get('STATE_NAMES', '')
 for m in re.finditer(r'\[([^\]]+)\]=(\S+)', env):
-    state_names[m.group(1)] = m.group(2)
+    state_names[m.group(1)] = m.group(2).strip('\"')
 
 if not items:
     print('没有找到缺陷。')
@@ -400,6 +418,9 @@ cmd_config() {
       echo "project_id=$(config_get project_id)"
       echo "view_id=$(config_get view_id)"
       echo "state_ids=$(config_get state_ids)"
+      local created_after
+      created_after="$(config_get created_after)"
+      echo "created_after=${created_after:-$DEFAULT_CREATED_AFTER}"
       ;;
     *)
       die "未知子命令：$subcmd。可用：show, init, edit, path, check"

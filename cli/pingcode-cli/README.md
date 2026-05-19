@@ -45,7 +45,7 @@ pingcode-cli bugs
 4. 右键该请求 → Copy → Copy as cURL
 5. 粘贴到终端，按回车
 
-工具会自动从 cURL 命令中解析出所有必要配置（URL、Cookie、项目 ID 等），保存到 `~/.config/pingcode-cli/config`。
+工具会自动从 cURL 命令中解析出所有必要配置（URL、Cookie、项目 ID、视图过滤条件等），保存到 `~/.config/pingcode-cli/config`。
 
 ## 使用
 
@@ -71,5 +71,6 @@ pingcode-cli config init
 ## 注意事项
 
 - 会话 Cookie 会过期，过期后重新运行 `pingcode-cli config init`，从浏览器复制新的 cURL 即可
+- `bugs` 会使用 cURL 中的 `created_at` 起始时间；旧配置缺少该字段时默认从 2020-01-01 开始查询
 - 配置文件权限为 600（仅本人可读写）
 - `set-state` 依赖 `bugs` 命令缓存的数据来查找缺陷 ID，如果报错找不到缺陷，先运行一次 `pingcode-cli bugs`
