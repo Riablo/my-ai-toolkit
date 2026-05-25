@@ -1,23 +1,51 @@
-# 飞书云文档读写
+# 飞书云文档创建与读写
 
-从官方 `lark-doc` skill 中抽取的个人常用子集：读取已有文档、在末尾追加内容、按 block 精确编辑。不要把这个 reference 扩展成完整飞书文档手册。
+从官方 `lark-doc` skill 中抽取的个人常用子集：新建文档、读取已有文档、在末尾追加内容、按 block 精确编辑。不要把这个 reference 扩展成完整飞书文档手册。
 
 ## 适用范围
 
-- 接受用户明确给出的 `/docx/<token>`、`/wiki/<token>` URL 或文档 token
+- 支持从明确标题、内容来源或生成要求新建文档
+- 编辑已有文档时，接受用户明确给出的 `/docx/<token>`、`/wiki/<token>` URL 或文档 token
 - 支持读取、总结、末尾追加、小范围替换/插入/删除
 - 不负责云空间搜索、表格、多维表格、评论、权限申请或批量迁移
 
 ## 必查命令
 
 ```bash
+lark-cli docs +create --api-version v2 --help
 lark-cli docs +fetch --api-version v2 --help
 lark-cli docs +update --api-version v2 --help
 ```
 
-所有 `docs +fetch` 和 `docs +update` 都固定带 `--api-version v2`。默认 user 身份；除非用户明确要求 bot 身份，不要加 `--as bot`。
+所有 `docs +create`、`docs +fetch` 和 `docs +update` 都固定带 `--api-version v2`。默认 user 身份；除非用户明确要求 bot 身份，不要加 `--as bot`。
 
 注意：当前 `lark-cli docs +update` 不支持 `--format`，不要把 `docs +fetch --format json` 的参数照搬过去。
+
+## 创建
+
+新建文档不需要已有 URL/token，但必须有明确标题、内容来源或生成要求。默认创建到用户个人空间/默认位置；用户明确给出父文件夹或知识库位置时再加 `--parent-token` 或 `--parent-position`。
+
+```bash
+lark-cli docs +create --api-version v2 \
+  --content '<title>标题</title><h1>概览</h1><p>正文</p>'
+
+lark-cli docs +create --api-version v2 --parent-token "<folder_token>" \
+  --content '<title>标题</title><p>正文</p>'
+```
+
+创建 / 导入场景下 XML 和 Markdown 都可用。默认 XML；只有用户提供 `.md` 文件、明确要求 Markdown，或要导入已整理好的长 Markdown 时，才用 Markdown：
+
+```bash
+lark-cli docs +create --api-version v2 --doc-format markdown --content @./report.md
+```
+
+`@file` 必须是当前目录下的相对路径；绝对路径会被 CLI 拒绝。长文档建议先在 `~/Downloads/` 准备本地文件，再 `cd` 到文件目录执行导入。
+
+创建成功后必须用返回的 URL 或 token 做一次轻量验证：
+
+```bash
+lark-cli docs +fetch --api-version v2 --doc "<created_doc_url>" --scope outline --max-depth 3
+```
 
 ## URL 与 token
 
@@ -128,10 +156,12 @@ EOF
 
 ## 验证
 
-写入后至少做一次轻量验证：
+新建或写入后至少做一次轻量验证：
 
 ```bash
 lark-cli docs +fetch --api-version v2 --doc "<doc>" --scope keyword --keyword "刚写入的关键词"
 ```
+
+新建文档优先验证 outline；追加或替换内容优先验证刚写入的关键词。
 
 若返回 `_notice.update`，当前任务完成后提醒用户 `lark-cli` 有新版本，不要中断当前写入流程去升级。
