@@ -1,0 +1,286 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+VERSION="0.1.0"
+DEFAULT_JSON_BASE_URL="https://player-t.720static.com/"
+DEFAULT_TIMEOUT="20"
+YUN_ORIGIN="https://www.720yun.com"
+USER_AGENT="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36"
+
+print_help() {
+  cat <<'EOF'
+pano-json - 下载 720 云作品的原始 JSON
+
+用法:
+  pano-json <720yun-url> [选项]
+
+示例:
+  pano-json https://www.720yun.com/vr/361jOztwOv1
+  pano-json https://www.720yun.com/vr/361jOztwOv1 -o tour.json
+  pano-json https://www.720yun.com/vr/361jOztwOv1 --print-url
+
+选项:
+  -o, --output <file>      输出文件路径；默认保存为 <作品ID>.json
+                            传入目录时保存为 <目录>/<作品ID>.json
+                            传入 - 时输出 JSON 到 stdout
+      --base-url <url>     JSON 相对路径的域名前缀
+                            默认: https://player-t.720static.com/
+      --timeout <seconds>  请求超时时间，默认 20 秒
+      --pretty             保存前格式化 JSON
+      --print-url          只输出解析后的 JSON 下载地址，不下载
+  -h, --help               显示帮助
+      --version            显示版本
+EOF
+}
+
+eprint() {
+  printf '%s\n' "$*" >&2
+}
+
+die() {
+  eprint "错误：$*"
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "缺少依赖命令：$1"
+}
+
+normalize_output_path() {
+  local raw_output="$1"
+  local tour_id="$2"
+
+  if [[ -z "$raw_output" ]]; then
+    printf '%s.json\n' "$tour_id"
+    return
+  fi
+
+  if [[ "$raw_output" == "-" ]]; then
+    printf '%s\n' "$raw_output"
+    return
+  fi
+
+  if [[ -d "$raw_output" || "$raw_output" == */ ]]; then
+    printf '%s/%s.json\n' "${raw_output%/}" "$tour_id"
+    return
+  fi
+
+  printf '%s\n' "$raw_output"
+}
+
+extract_tour_id() {
+  local tour_url="$1"
+  local without_fragment="${tour_url%%#*}"
+  local without_query="${without_fragment%%\?*}"
+  local trimmed="${without_query%/}"
+  printf '%s\n' "${trimmed##*/}"
+}
+
+resolve_json_url() {
+  local html_file="$1"
+  local base_url="$2"
+
+  python3 - "$html_file" "$base_url" <<'PY'
+import json
+import re
+import sys
+from urllib.parse import urljoin
+
+html_file, base_url = sys.argv[1], sys.argv[2]
+
+with open(html_file, "r", encoding="utf-8", errors="replace") as fh:
+    html = fh.read()
+
+match = re.search(r'window\.json\s*=\s*("(?:(?:\\.)|[^"\\])*")', html)
+if not match:
+    print("错误：没有在页面源码中找到 window.json。", file=sys.stderr)
+    sys.exit(2)
+
+try:
+    json_path = json.loads(match.group(1))
+except json.JSONDecodeError:
+    print("错误：页面源码中的 window.json 不是合法字符串。", file=sys.stderr)
+    sys.exit(2)
+
+if not isinstance(json_path, str) or not json_path.strip():
+    print("错误：页面源码中的 window.json 为空。", file=sys.stderr)
+    sys.exit(2)
+
+json_path = json_path.strip()
+if re.match(r"^https?://", json_path, re.IGNORECASE):
+    print(json_path)
+else:
+    print(urljoin(base_url.rstrip("/") + "/", json_path.lstrip("/")))
+PY
+}
+
+validate_json_file() {
+  local json_file="$1"
+
+  python3 - "$json_file" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as fh:
+        json.load(fh)
+except Exception as exc:
+    print(f"错误：下载结果不是合法 JSON：{exc}", file=sys.stderr)
+    sys.exit(2)
+PY
+}
+
+pretty_print_json() {
+  local input_file="$1"
+  local output_file="$2"
+
+  python3 - "$input_file" "$output_file" <<'PY'
+import json
+import sys
+
+input_file, output_file = sys.argv[1], sys.argv[2]
+with open(input_file, "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+with open(output_file, "w", encoding="utf-8") as fh:
+    json.dump(payload, fh, ensure_ascii=False, indent=2)
+    fh.write("\n")
+PY
+}
+
+tour_url=""
+output_path=""
+json_base_url="$DEFAULT_JSON_BASE_URL"
+timeout_seconds="$DEFAULT_TIMEOUT"
+print_url_only=0
+pretty=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      print_help
+      exit 0
+      ;;
+    --version)
+      printf 'pano-json %s\n' "$VERSION"
+      exit 0
+      ;;
+    -o|--output)
+      [[ $# -ge 2 ]] || die "$1 需要一个文件路径"
+      output_path="$2"
+      shift 2
+      ;;
+    --base-url)
+      [[ $# -ge 2 ]] || die "$1 需要一个 URL"
+      json_base_url="$2"
+      shift 2
+      ;;
+    --timeout)
+      [[ $# -ge 2 ]] || die "$1 需要秒数"
+      timeout_seconds="$2"
+      shift 2
+      ;;
+    --pretty)
+      pretty=1
+      shift
+      ;;
+    --print-url)
+      print_url_only=1
+      shift
+      ;;
+    --)
+      shift
+      if [[ $# -gt 0 ]]; then
+        if [[ -n "$tour_url" || $# -gt 1 ]]; then
+          die "只能传入一个 720 云作品网址"
+        fi
+        tour_url="$1"
+        shift
+      fi
+      ;;
+    -*)
+      die "未知选项：$1"
+      ;;
+    *)
+      if [[ -n "$tour_url" ]]; then
+        die "只能传入一个 720 云作品网址"
+      fi
+      tour_url="$1"
+      shift
+      ;;
+  esac
+done
+
+if [[ $# -gt 0 ]]; then
+  die "只能传入一个 720 云作品网址"
+fi
+
+[[ -n "$tour_url" ]] || die "请传入 720 云作品网址"
+[[ "$tour_url" =~ ^https://www\.720yun\.com/vr/[A-Za-z0-9_-]+/?([?#].*)?$ ]] || die "只支持 https://www.720yun.com/vr/<作品ID> 格式的网址"
+[[ "$json_base_url" =~ ^https?:// ]] || die "--base-url 必须以 http:// 或 https:// 开头"
+[[ "$timeout_seconds" =~ ^[0-9]+$ ]] || die "--timeout 必须是正整数秒数"
+[[ "$timeout_seconds" -gt 0 ]] || die "--timeout 必须大于 0"
+
+require_command curl
+require_command python3
+
+tour_id="$(extract_tour_id "$tour_url")"
+resolved_output_path="$(normalize_output_path "$output_path" "$tour_id")"
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+html_file="$tmp_dir/page.html"
+json_file="$tmp_dir/tour.json"
+final_tmp="$tmp_dir/final.json"
+
+curl \
+  --fail \
+  --location \
+  --silent \
+  --show-error \
+  --compressed \
+  --max-time "$timeout_seconds" \
+  --header "Accept: text/html,application/xhtml+xml" \
+  --header "User-Agent: $USER_AGENT" \
+  --output "$html_file" \
+  "$tour_url"
+
+json_url="$(resolve_json_url "$html_file" "$json_base_url")"
+
+if [[ "$print_url_only" -eq 1 ]]; then
+  printf '%s\n' "$json_url"
+  exit 0
+fi
+
+curl \
+  --fail \
+  --location \
+  --silent \
+  --show-error \
+  --compressed \
+  --max-time "$timeout_seconds" \
+  --header "Accept: application/json" \
+  --header "Origin: $YUN_ORIGIN" \
+  --header "Referer: $tour_url" \
+  --header "User-Agent: $USER_AGENT" \
+  --output "$json_file" \
+  "$json_url"
+
+validate_json_file "$json_file"
+
+if [[ "$pretty" -eq 1 ]]; then
+  pretty_print_json "$json_file" "$final_tmp"
+else
+  cp "$json_file" "$final_tmp"
+fi
+
+if [[ "$resolved_output_path" == "-" ]]; then
+  cat "$final_tmp"
+  exit 0
+fi
+
+mkdir -p "$(dirname "$resolved_output_path")"
+cp "$final_tmp" "$resolved_output_path"
+
+eprint "JSON 地址：$json_url"
+eprint "已保存：$resolved_output_path"
+printf '%s\n' "$resolved_output_path"
