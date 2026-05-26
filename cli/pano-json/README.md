@@ -23,6 +23,7 @@ pano-json --help
 最常用写法：
 
 ```bash
+pano-json eb2jkrkmkf9
 pano-json https://www.720yun.com/vr/361jOztwOv1
 ```
 
@@ -65,7 +66,7 @@ pano-json https://www.720yun.com/vr/361jOztwOv1 -o -
 ## 选项
 
 ```bash
-pano-json <720yun-url> [选项]
+pano-json <720yun-url|tour-id> [选项]
 
 -o, --output <file>      输出文件路径；默认保存为 <作品ID>.json
                          传入目录时保存为 <目录>/<作品ID>.json
@@ -81,7 +82,7 @@ pano-json <720yun-url> [选项]
 
 ## 抓取策略
 
-1. 只接受 `https://www.720yun.com/vr/<作品ID>` 格式的公开作品地址。
+1. 接受 `https://www.720yun.com/vr/<作品ID>` 格式的公开作品地址，也接受裸作品 ID。
 2. 用浏览器 User-Agent 请求作品页源码。
 3. 用和 Pano Canvas Worker 相同的正则提取 `window.json`。
 4. 如果 `window.json` 是相对路径，则用 `--base-url` 的值补全。

@@ -12,9 +12,10 @@ print_help() {
 pano-json - 下载 720 云作品的原始 JSON
 
 用法:
-  pano-json <720yun-url> [选项]
+  pano-json <720yun-url|tour-id> [选项]
 
 示例:
+  pano-json eb2jkrkmkf9
   pano-json https://www.720yun.com/vr/361jOztwOv1
   pano-json https://www.720yun.com/vr/361jOztwOv1 -o tour.json
   pano-json https://www.720yun.com/vr/361jOztwOv1 --print-url
@@ -44,6 +45,22 @@ die() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "缺少依赖命令：$1"
+}
+
+normalize_tour_url() {
+  local raw="$1"
+
+  if [[ "$raw" =~ ^https://www\.720yun\.com/vr/[A-Za-z0-9_-]+/?([?#].*)?$ ]]; then
+    printf '%s\n' "$raw"
+    return
+  fi
+
+  if [[ "$raw" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    printf '%s/vr/%s\n' "$YUN_ORIGIN" "$raw"
+    return
+  fi
+
+  return 1
 }
 
 normalize_output_path() {
@@ -191,7 +208,7 @@ while [[ $# -gt 0 ]]; do
       shift
       if [[ $# -gt 0 ]]; then
         if [[ -n "$tour_url" || $# -gt 1 ]]; then
-          die "只能传入一个 720 云作品网址"
+          die "只能传入一个 720 云作品网址或作品 ID"
         fi
         tour_url="$1"
         shift
@@ -202,7 +219,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       if [[ -n "$tour_url" ]]; then
-        die "只能传入一个 720 云作品网址"
+        die "只能传入一个 720 云作品网址或作品 ID"
       fi
       tour_url="$1"
       shift
@@ -211,11 +228,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ $# -gt 0 ]]; then
-  die "只能传入一个 720 云作品网址"
+  die "只能传入一个 720 云作品网址或作品 ID"
 fi
 
-[[ -n "$tour_url" ]] || die "请传入 720 云作品网址"
-[[ "$tour_url" =~ ^https://www\.720yun\.com/vr/[A-Za-z0-9_-]+/?([?#].*)?$ ]] || die "只支持 https://www.720yun.com/vr/<作品ID> 格式的网址"
+[[ -n "$tour_url" ]] || die "请传入 720 云作品网址或作品 ID"
+if ! tour_url="$(normalize_tour_url "$tour_url")"; then
+  die "只支持 https://www.720yun.com/vr/<作品ID> 格式的网址，或直接传入作品 ID"
+fi
 [[ "$json_base_url" =~ ^https?:// ]] || die "--base-url 必须以 http:// 或 https:// 开头"
 [[ "$timeout_seconds" =~ ^[0-9]+$ ]] || die "--timeout 必须是正整数秒数"
 [[ "$timeout_seconds" -gt 0 ]] || die "--timeout 必须大于 0"
