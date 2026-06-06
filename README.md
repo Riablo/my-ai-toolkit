@@ -27,13 +27,19 @@ bash scripts/install.sh --shell all      # 同时安装 zsh 和 fish 补全
 bash scripts/install.sh --no-rc          # 只安装文件，不修改 shell 配置
 ```
 
-zsh 的 rc 配置默认使用 `standalone` 模式，会写入 `PATH`、`fpath` 并自行执行 `compinit`，适合全新机器或未知环境。如果你的 `.zshrc` 已经有统一的 `compinit`，可以使用更轻的集成模式：
+zsh 的 rc 配置默认使用 `auto` 模式：如果已有 my-ai-toolkit 托管块，会保留原来的位置以及 `standalone` 或 `integrated` 模式；如果没有旧块，则按 `standalone` 初始化，写入 `PATH`、`fpath` 并自行执行 `compinit`，适合全新机器或未知环境。如果你的 `.zshrc` 已经有统一的 `compinit`，可以首次安装时使用更轻的集成模式：
 
 ```bash
 bash scripts/install.sh --shell zsh --zsh-rc-mode integrated
 ```
 
 `integrated` 只写入 `PATH` 和 `fpath`，并把托管块放到 `.zshrc` 开头，依赖后续已有的 `compinit` 统一加载补全。
+
+之后再执行裸命令也会保留已有模式，不会把 `integrated` 覆盖回 `standalone`：
+
+```bash
+bash scripts/install.sh
+```
 
 ## skills/
 

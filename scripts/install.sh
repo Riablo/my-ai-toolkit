@@ -22,7 +22,9 @@ ZSH_COMP_DIR="${HOME}/.zsh/completions"
 FISH_COMP_DIR="${HOME}/.config/fish/completions"
 SHELL_MODE="auto"
 UPDATE_RC=1
-ZSH_RC_MODE="standalone"
+ZSH_RC_MODE="auto"
+ZSH_START_MARKER="# >>> my-ai-toolkit >>>"
+ZSH_END_MARKER="# <<< my-ai-toolkit <<<"
 
 usage() {
   cat <<EOF
@@ -36,7 +38,7 @@ my-ai-toolkit installer
   --bin-dir <path>            CLI 软链接目录，默认 ~/.local/bin
   --zsh-completion-dir <path> zsh 补全目录，默认 ~/.zsh/completions
   --fish-completion-dir <path> fish 补全目录，默认 ~/.config/fish/completions
-  --zsh-rc-mode <mode>       zsh 配置模式：standalone 或 integrated，默认 standalone
+  --zsh-rc-mode <mode>       zsh 配置模式：auto、standalone 或 integrated，默认 auto
   --no-rc                     不更新 ~/.zshrc 或 ~/.config/fish/config.fish
   -h, --help                  显示帮助
 
@@ -100,8 +102,8 @@ case "$SHELL_MODE" in
 esac
 
 case "$ZSH_RC_MODE" in
-  standalone|integrated) ;;
-  *) die "--zsh-rc-mode 只支持 standalone 或 integrated" ;;
+  auto|standalone|integrated) ;;
+  *) die "--zsh-rc-mode 只支持 auto、standalone 或 integrated" ;;
 esac
 
 dedupe_words() {
@@ -248,6 +250,48 @@ install_symlink() {
   return 0
 }
 
+has_managed_block() {
+  local target="$1"
+  local start_marker="$2"
+  local end_marker="$3"
+
+  [ -f "$target" ] && grep -Fxq "$start_marker" "$target" && grep -Fxq "$end_marker" "$target"
+}
+
+replace_managed_block_in_place() {
+  local target="$1"
+  local start_marker="$2"
+  local end_marker="$3"
+  local block="$4"
+  local block_file
+  local tmp
+
+  block_file="$(mktemp "${target}.block.XXXXXX")"
+  tmp="$(mktemp "${target}.tmp.XXXXXX")"
+  printf '%s\n' "$block" > "$block_file"
+
+  awk -v start="$start_marker" -v end="$end_marker" -v block_file="$block_file" '
+    $0 == start {
+      print start
+      while ((getline line < block_file) > 0) {
+        print line
+      }
+      close(block_file)
+      print end
+      skip = 1
+      next
+    }
+    $0 == end {
+      skip = 0
+      next
+    }
+    skip != 1 { print }
+  ' "$target" > "$tmp"
+
+  rm "$block_file"
+  mv "$tmp" "$target"
+}
+
 write_managed_block() {
   local target="$1"
   local start_marker="$2"
@@ -257,6 +301,12 @@ write_managed_block() {
 
   mkdir -p "$(dirname "$target")"
   touch "$target"
+
+  if has_managed_block "$target" "$start_marker" "$end_marker"; then
+    replace_managed_block_in_place "$target" "$start_marker" "$end_marker" "$block"
+    return
+  fi
+
   tmp="$(mktemp "${target}.tmp.XXXXXX")"
 
   awk -v start="$start_marker" -v end="$end_marker" '
@@ -284,6 +334,12 @@ write_managed_block_at_start() {
 
   mkdir -p "$(dirname "$target")"
   touch "$target"
+
+  if has_managed_block "$target" "$start_marker" "$end_marker"; then
+    replace_managed_block_in_place "$target" "$start_marker" "$end_marker" "$block"
+    return
+  fi
+
   stripped="$(mktemp "${target}.stripped.XXXXXX")"
   tmp="$(mktemp "${target}.tmp.XXXXXX")"
 
@@ -303,6 +359,42 @@ write_managed_block_at_start() {
   rm "$stripped"
   mv "$tmp" "$target"
 }
+
+detect_existing_zsh_rc_mode() {
+  local target="$1"
+  local block
+
+  if [ ! -f "$target" ] || ! grep -Fxq "$ZSH_START_MARKER" "$target" || ! grep -Fxq "$ZSH_END_MARKER" "$target"; then
+    printf 'standalone\n'
+    return
+  fi
+
+  block="$(awk -v start="$ZSH_START_MARKER" -v end="$ZSH_END_MARKER" '
+    $0 == start { in_block = 1; next }
+    $0 == end { exit }
+    in_block == 1 { print }
+  ' "$target")"
+
+  case "$block" in
+    *"(integrated)"*)
+      printf 'integrated\n'
+      ;;
+    *"(standalone)"*)
+      printf 'standalone\n'
+      ;;
+    *compinit*)
+      printf 'standalone\n'
+      ;;
+    *)
+      printf 'integrated\n'
+      ;;
+  esac
+}
+
+ZSH_RC_EFFECTIVE_MODE="$ZSH_RC_MODE"
+if [ "$ZSH_RC_MODE" = "auto" ]; then
+  ZSH_RC_EFFECTIVE_MODE="$(detect_existing_zsh_rc_mode "${HOME}/.zshrc")"
+fi
 
 mkdir -p "$BIN_DIR"
 
@@ -367,7 +459,7 @@ fi
 
 if [ "$UPDATE_RC" -eq 1 ]; then
   if has_rc_shell zsh; then
-    if [ "$ZSH_RC_MODE" = "standalone" ]; then
+    if [ "$ZSH_RC_EFFECTIVE_MODE" = "standalone" ]; then
       zsh_block="$(cat <<EOF
 # my-ai-toolkit: CLI tools and zsh completions (standalone)
 case ":\$PATH:" in
@@ -383,7 +475,7 @@ autoload -Uz compinit
 compinit -i
 EOF
 )"
-      write_managed_block "${HOME}/.zshrc" "# >>> my-ai-toolkit >>>" "# <<< my-ai-toolkit <<<" "$zsh_block"
+      write_managed_block "${HOME}/.zshrc" "$ZSH_START_MARKER" "$ZSH_END_MARKER" "$zsh_block"
     else
       zsh_block="$(cat <<EOF
 # my-ai-toolkit: CLI tools and zsh completions (integrated)
@@ -397,7 +489,7 @@ if [[ -d "$ZSH_COMP_DIR" ]]; then
 fi
 EOF
 )"
-      write_managed_block_at_start "${HOME}/.zshrc" "# >>> my-ai-toolkit >>>" "# <<< my-ai-toolkit <<<" "$zsh_block"
+      write_managed_block_at_start "${HOME}/.zshrc" "$ZSH_START_MARKER" "$ZSH_END_MARKER" "$zsh_block"
     fi
   fi
 
@@ -428,7 +520,7 @@ else
 fi
 
 echo ""
-echo -e "${DIM}检测到主 shell：${primary_shell}；补全模式：${SHELL_MODE}；zsh rc 模式：${ZSH_RC_MODE}。${RESET}"
+echo -e "${DIM}检测到主 shell：${primary_shell}；补全模式：${SHELL_MODE}；zsh rc 模式：${ZSH_RC_EFFECTIVE_MODE}。${RESET}"
 
 if [ "$UPDATE_RC" -eq 1 ]; then
   if has_rc_shell zsh; then
@@ -441,7 +533,7 @@ else
   echo -e "${YELLOW}已按 --no-rc 跳过 shell 配置文件更新。${RESET}"
   echo "请自行确保 $BIN_DIR 在 PATH 中。"
   if has_shell zsh; then
-    if [ "$ZSH_RC_MODE" = "standalone" ]; then
+    if [ "$ZSH_RC_EFFECTIVE_MODE" = "standalone" ]; then
       echo "zsh 还需要把 $ZSH_COMP_DIR 加入 fpath 并启用 compinit。"
     else
       echo "zsh 还需要在现有 compinit 之前把 $ZSH_COMP_DIR 加入 fpath。"
