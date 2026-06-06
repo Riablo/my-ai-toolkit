@@ -7,9 +7,6 @@ __myskills_skills() {
 }
 
 _myskills() {
-  local curcontext="$curcontext" state line
-  typeset -A opt_args
-
   local -a commands target_options
   commands=(
     'list:列出所有可用的 skills'
@@ -26,23 +23,20 @@ _myskills() {
     '--local-claude[./.claude/skills/]'
   )
 
-  _arguments -C \
-    '(-h --help)'{-h,--help}'[显示帮助信息]' \
-    '1:command:->command' \
-    '*::arg:->arg' && return
-
-  case "$state" in
-    command)
+  if (( CURRENT == 2 )); then
+    if [[ "$PREFIX" == -* ]]; then
+      _arguments '(-h --help)'{-h,--help}'[显示帮助信息]'
+    else
       _describe -t commands 'command' commands
-      ;;
-    arg)
-      case "$words[2]" in
-        link|install|unlink|uninstall)
-          _arguments \
-            $target_options \
-            '*:skill:__myskills_skills'
-          ;;
-      esac
+    fi
+    return
+  fi
+
+  case "$words[2]" in
+    link|install|unlink|uninstall)
+      _arguments \
+        $target_options \
+        '*:skill:__myskills_skills'
       ;;
   esac
 }

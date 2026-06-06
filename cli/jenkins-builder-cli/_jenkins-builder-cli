@@ -1,9 +1,6 @@
 #compdef jenkins-builder-cli
 
 _jenkins-builder-cli() {
-  local curcontext="$curcontext" state line
-  typeset -A opt_args
-
   local -a commands config_commands jobs_commands alias_commands runs_commands labels
   commands=(
     'config:管理本地配置'
@@ -38,113 +35,113 @@ _jenkins-builder-cli() {
   )
   labels=(test prod)
 
-  _arguments -C \
-    '(-h --help)'{-h,--help}'[显示帮助信息]' \
-    '1:command:->command' \
-    '*::arg:->arg' && return
-
-  case "$state" in
-    command)
+  if (( CURRENT == 2 )); then
+    if [[ "$PREFIX" == -* ]]; then
+      _arguments '(-h --help)'{-h,--help}'[显示帮助信息]'
+    else
       _describe -t commands 'command' commands
-      ;;
-    arg)
-      case "$words[2]" in
-        config)
-          case "$words[3]" in
-            init)
-              _arguments \
-                '--url[Jenkins URL]:url:_urls' \
-                '--username[用户名]:username:' \
-                '--token[API token]:token:' \
-                '--verify-ssl[是否校验证书]:verify ssl:(true false)'
-              ;;
-            show)
-              _arguments '--json[输出 JSON]'
-              ;;
-            *)
-              if (( CURRENT == 3 )); then
-                _describe -t config-commands 'config command' config_commands
-              fi
-              ;;
-          esac
-          ;;
-        jobs)
-          case "$words[3]" in
-            list)
-              _arguments \
-                '--query[按名称/标签/别称过滤]:query:' \
-                '--json[输出 JSON]'
-              ;;
-            label)
-              _arguments \
-                '--json[输出 JSON]' \
-                '1:job name or alias:' \
-                '2:label:($labels)'
-              ;;
-            unlabel)
-              _arguments \
-                '--json[输出 JSON]' \
-                '1:job name or alias:'
-              ;;
-            alias)
-              case "$words[4]" in
-                list)
-                  _arguments '--json[输出 JSON]'
-                  ;;
-                add|rm)
-                  _arguments \
-                    '--json[输出 JSON]' \
-                    '1:job name or alias:' \
-                    '2:alias:'
-                  ;;
-                *)
-                  if (( CURRENT == 4 )); then
-                    _describe -t alias-commands 'alias command' alias_commands
-                  fi
-                  ;;
-              esac
-              ;;
-            *)
-              if (( CURRENT == 3 )); then
-                _describe -t jobs-commands 'jobs command' jobs_commands
-              fi
-              ;;
-          esac
-          ;;
-        build)
+    fi
+    return
+  fi
+
+  case "$words[2]" in
+    config)
+      case "$words[3]" in
+        init)
           _arguments \
-            '--follow[等待构建完成]' \
-            '--json[输出 JSON]' \
-            '1:job name or alias:'
+            '--url[Jenkins URL]:url:_urls' \
+            '--username[用户名]:username:' \
+            '--token[API token]:token:' \
+            '--verify-ssl[是否校验证书]:verify ssl:(true false)'
           ;;
-        set-branch)
+        show)
+          _arguments '--json[输出 JSON]'
+          ;;
+        *)
+          if (( CURRENT == 3 )); then
+            _describe -t config-commands 'config command' config_commands
+          fi
+          ;;
+      esac
+      ;;
+    jobs)
+      case "$words[3]" in
+        list)
+          _arguments \
+            '--query[按名称/标签/别称过滤]:query:' \
+            '--json[输出 JSON]'
+          ;;
+        label)
           _arguments \
             '--json[输出 JSON]' \
             '1:job name or alias:' \
-            '2:branch:'
+            '2:label:($labels)'
           ;;
-        runs)
-          case "$words[3]" in
-            list|status|stop)
+        unlabel)
+          _arguments \
+            '--json[输出 JSON]' \
+            '1:job name or alias:'
+          ;;
+        alias)
+          case "$words[4]" in
+            list)
+              _arguments '--json[输出 JSON]'
+              ;;
+            add|rm)
               _arguments \
                 '--json[输出 JSON]' \
-                '1:run id:'
+                '1:job name or alias:' \
+                '2:alias:'
               ;;
             *)
-              if (( CURRENT == 3 )); then
-                _describe -t runs-commands 'runs command' runs_commands
+              if (( CURRENT == 4 )); then
+                _describe -t alias-commands 'alias command' alias_commands
               fi
               ;;
           esac
           ;;
-        logs)
+        *)
+          if (( CURRENT == 3 )); then
+            _describe -t jobs-commands 'jobs command' jobs_commands
+          fi
+          ;;
+      esac
+      ;;
+    build)
+      _arguments \
+        '--follow[等待构建完成]' \
+        '--json[输出 JSON]' \
+        '1:job name or alias:'
+      ;;
+    set-branch)
+      _arguments \
+        '--json[输出 JSON]' \
+        '1:job name or alias:' \
+        '2:branch:'
+      ;;
+    runs)
+      case "$words[3]" in
+        list)
+          _arguments '--json[输出 JSON]'
+          ;;
+        status|stop)
           _arguments \
-            '--tail[仅展示最后 N 行]:lines:' \
-            '--follow[持续输出直到结束]' \
             '--json[输出 JSON]' \
             '1:run id:'
           ;;
+        *)
+          if (( CURRENT == 3 )); then
+            _describe -t runs-commands 'runs command' runs_commands
+          fi
+          ;;
       esac
+      ;;
+    logs)
+      _arguments \
+        '--tail[仅展示最后 N 行]:lines:' \
+        '--follow[持续输出直到结束]' \
+        '--json[输出 JSON]' \
+        '1:run id:'
       ;;
   esac
 }

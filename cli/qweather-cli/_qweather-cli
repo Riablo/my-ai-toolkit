@@ -1,10 +1,7 @@
 #compdef qweather-cli
 
 _qweather-cli() {
-  local curcontext="$curcontext" state line
-  typeset -A opt_args
-
-  local -a commands config_commands units days hours
+  local -a commands config_commands units days hours weather_args
   commands=(
     'init:初始化 API Host 和 API Key'
     'config:查看配置'
@@ -21,52 +18,48 @@ _qweather-cli() {
   days=(3 7 10 15 30)
   hours=(24 72 168)
 
-  _arguments -C \
-    '(-h --help)'{-h,--help}'[显示帮助信息]' \
-    '1:command:->command' \
-    '*::arg:->arg' && return
-
-  case "$state" in
-    command)
+  if (( CURRENT == 2 )); then
+    if [[ "$PREFIX" == -* ]]; then
+      _arguments '(-h --help)'{-h,--help}'[显示帮助信息]'
+    else
       _describe -t commands 'command' commands
+    fi
+    return
+  fi
+
+  case "$words[2]" in
+    init)
+      _arguments \
+        '--api-host[QWeather API Host]:api host:' \
+        '--api-key[QWeather API Key]:api key:'
       ;;
-    arg)
-      case "$words[2]" in
-        init)
-          _arguments \
-            '--api-host[QWeather API Host]:api host:' \
-            '--api-key[QWeather API Key]:api key:'
-          ;;
-        config)
-          if (( CURRENT == 3 )); then
-            _describe -t config-commands 'config command' config_commands
-          fi
-          ;;
-        now|daily|hourly)
-          local -a weather_args
-          weather_args=(
-            '--city[城市名]:city:'
-            '--location-id[QWeather LocationID]:location id:'
-            '--lon[经度]:longitude:'
-            '--lat[纬度]:latitude:'
-            '--adm[GeoAPI 上级行政区过滤]:admin:'
-            '--range[GeoAPI 国家/地区范围]:range:'
-            '--number[GeoAPI 候选数量]:number:'
-            '--location-index[选择第几个 GeoAPI 结果]:index:'
-            '--lang[语言]:lang:'
-            '--unit[单位系统]:unit:($units)'
-            '--raw[输出原始 JSON]'
-            '1:city:'
-          )
-          if [ "$words[2]" = "daily" ]; then
-            weather_args+=('--days[预报天数]:days:($days)')
-          fi
-          if [ "$words[2]" = "hourly" ]; then
-            weather_args+=('--hours[预报小时数]:hours:($hours)')
-          fi
-          _arguments $weather_args
-          ;;
-      esac
+    config)
+      if (( CURRENT == 3 )); then
+        _describe -t config-commands 'config command' config_commands
+      fi
+      ;;
+    now|daily|hourly)
+      weather_args=(
+        '--city[城市名]:city:'
+        '--location-id[QWeather LocationID]:location id:'
+        '--lon[经度]:longitude:'
+        '--lat[纬度]:latitude:'
+        '--adm[GeoAPI 上级行政区过滤]:admin:'
+        '--range[GeoAPI 国家/地区范围]:range:'
+        '--number[GeoAPI 候选数量]:number:'
+        '--location-index[选择第几个 GeoAPI 结果]:index:'
+        '--lang[语言]:lang:'
+        '--unit[单位系统]:unit:($units)'
+        '--raw[输出原始 JSON]'
+        '1:city:'
+      )
+      if [ "$words[2]" = "daily" ]; then
+        weather_args+=('--days[预报天数]:days:($days)')
+      fi
+      if [ "$words[2]" = "hourly" ]; then
+        weather_args+=('--hours[预报小时数]:hours:($hours)')
+      fi
+      _arguments $weather_args
       ;;
   esac
 }

@@ -1,36 +1,33 @@
 #compdef readlater-cli
 
 _readlater-cli() {
-  local curcontext="$curcontext" state line
-  typeset -A opt_args
-
-  local -a commands
+  local -a commands common_options
   commands=('fetch:抓取一个链接摘要')
+  common_options=(
+    '(-j --json)'{-j,--json}'[输出 JSON]'
+    '--timeout[请求超时时间（秒）]:seconds:'
+    '--summary-length[概要最大长度]:length:'
+  )
 
-  _arguments -C \
-    '(-h --help)'{-h,--help}'[显示帮助信息]' \
-    '(-j --json)'{-j,--json}'[输出 JSON]' \
-    '--timeout[请求超时时间（秒）]:seconds:' \
-    '--summary-length[概要最大长度]:length:' \
-    '1:command or url:->first' \
-    '*::arg:->arg' && return
+  if (( CURRENT == 2 )); then
+    if [[ "$PREFIX" == -* ]]; then
+      _arguments \
+        '(-h --help)'{-h,--help}'[显示帮助信息]' \
+        $common_options
+    elif [[ "$PREFIX" == http://* || "$PREFIX" == https://* ]]; then
+      _urls
+    else
+      _describe -t commands 'command' commands
+      _urls
+    fi
+    return
+  fi
 
-  case "$state" in
-    first)
-      _alternative \
-        'commands:command:((fetch\\:抓取一个链接摘要))' \
-        'urls:url:_urls'
-      ;;
-    arg)
-      case "$words[2]" in
-        fetch)
-          _arguments \
-            '(-j --json)'{-j,--json}'[输出 JSON]' \
-            '--timeout[请求超时时间（秒）]:seconds:' \
-            '--summary-length[概要最大长度]:length:' \
-            '1:url:_urls'
-          ;;
-      esac
+  case "$words[2]" in
+    fetch)
+      _arguments \
+        $common_options \
+        '1:url:_urls'
       ;;
   esac
 }

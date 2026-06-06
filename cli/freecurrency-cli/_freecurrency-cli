@@ -1,9 +1,6 @@
 #compdef freecurrency-cli
 
 _freecurrency-cli() {
-  local curcontext="$curcontext" state line
-  typeset -A opt_args
-
   local -a commands config_commands cache_commands currencies
   commands=(
     'init:初始化 App ID'
@@ -23,46 +20,43 @@ _freecurrency-cli() {
   )
   currencies=(USD CNY EUR JPY HKD TWD GBP AUD CAD SGD KRW)
 
-  _arguments -C \
-    '(-h --help)'{-h,--help}'[显示帮助信息]' \
-    '1:command:->command' \
-    '*::arg:->arg' && return
-
-  case "$state" in
-    command)
+  if (( CURRENT == 2 )); then
+    if [[ "$PREFIX" == -* ]]; then
+      _arguments '(-h --help)'{-h,--help}'[显示帮助信息]'
+    else
       _describe -t commands 'command' commands
+    fi
+    return
+  fi
+
+  case "$words[2]" in
+    init)
+      _arguments \
+        '--app-id[Open Exchange Rates App ID]:app id:' \
+        '--api-key[兼容旧参数名，等同于 --app-id]:app id:'
       ;;
-    arg)
-      case "$words[2]" in
-        init)
-          _arguments \
-            '--app-id[Open Exchange Rates App ID]:app id:' \
-            '--api-key[兼容旧参数名，等同于 --app-id]:app id:'
-          ;;
-        config)
-          if (( CURRENT == 3 )); then
-            _describe -t config-commands 'config command' config_commands
-          fi
-          ;;
-        convert)
-          _arguments \
-            '--json[输出详细 JSON]' \
-            '1:amount:' \
-            '2:from currency:($currencies)' \
-            '3:to marker:(to)' \
-            '4:to currency:($currencies)'
-          ;;
-        latest)
-          _arguments \
-            '--base[基准货币]:currency:($currencies)' \
-            '--currencies[目标货币列表]:currencies:($currencies)'
-          ;;
-        cache)
-          if (( CURRENT == 3 )); then
-            _describe -t cache-commands 'cache command' cache_commands
-          fi
-          ;;
-      esac
+    config)
+      if (( CURRENT == 3 )); then
+        _describe -t config-commands 'config command' config_commands
+      fi
+      ;;
+    convert)
+      _arguments \
+        '--json[输出详细 JSON]' \
+        '1:amount:' \
+        '2:from currency:($currencies)' \
+        '3:to marker:(to)' \
+        '4:to currency:($currencies)'
+      ;;
+    latest)
+      _arguments \
+        '--base[基准货币]:currency:($currencies)' \
+        '--currencies[目标货币列表]:currencies:($currencies)'
+      ;;
+    cache)
+      if (( CURRENT == 3 )); then
+        _describe -t cache-commands 'cache command' cache_commands
+      fi
       ;;
   esac
 }

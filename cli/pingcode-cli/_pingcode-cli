@@ -1,9 +1,6 @@
 #compdef pingcode-cli
 
 _pingcode-cli() {
-  local curcontext="$curcontext" state line
-  typeset -A opt_args
-
   local -a commands config_commands states
   commands=(
     'bugs:列出我的未解决缺陷'
@@ -19,34 +16,31 @@ _pingcode-cli() {
   )
   states=(待处理 处理中 已修复 重新打开 挂起)
 
-  _arguments -C \
-    '(-h --help)'{-h,--help}'[显示帮助信息]' \
-    '1:command:->command' \
-    '*::arg:->arg' && return
-
-  case "$state" in
-    command)
+  if (( CURRENT == 2 )); then
+    if [[ "$PREFIX" == -* ]]; then
+      _arguments '(-h --help)'{-h,--help}'[显示帮助信息]'
+    else
       _describe -t commands 'command' commands
+    fi
+    return
+  fi
+
+  case "$words[2]" in
+    bugs)
+      _arguments \
+        '--debug[打印原始 API 响应]' \
+        '--json[以 JSON 格式输出缺陷列表]' \
+        '1:limit:'
       ;;
-    arg)
-      case "$words[2]" in
-        bugs)
-          _arguments \
-            '--debug[打印原始 API 响应]' \
-            '--json[以 JSON 格式输出缺陷列表]' \
-            '1:limit:'
-          ;;
-        set-state)
-          _arguments \
-            '1:bug id:' \
-            '2:state:($states)'
-          ;;
-        config)
-          if (( CURRENT == 3 )); then
-            _describe -t config-commands 'config command' config_commands
-          fi
-          ;;
-      esac
+    set-state)
+      _arguments \
+        '1:bug id:' \
+        '2:state:($states)'
+      ;;
+    config)
+      if (( CURRENT == 3 )); then
+        _describe -t config-commands 'config command' config_commands
+      fi
       ;;
   esac
 }

@@ -1,9 +1,6 @@
 #compdef testpage-cli
 
 _testpage-cli() {
-  local curcontext="$curcontext" state line
-  typeset -A opt_args
-
   local -a commands config_commands
   commands=(
     'init:初始化测试项目目录配置'
@@ -16,36 +13,33 @@ _testpage-cli() {
     'check:检查配置和仓库状态'
   )
 
-  _arguments -C \
-    '(-h --help)'{-h,--help}'[显示帮助信息]' \
-    '1:command:->command' \
-    '*::arg:->arg' && return
-
-  case "$state" in
-    command)
+  if (( CURRENT == 2 )); then
+    if [[ "$PREFIX" == -* ]]; then
+      _arguments '(-h --help)'{-h,--help}'[显示帮助信息]'
+    else
       _describe -t commands 'command' commands
+    fi
+    return
+  fi
+
+  case "$words[2]" in
+    init)
+      _arguments \
+        '--project-root[本地 html_test Git 项目目录]:directory:_directories' \
+        '--base-url[访问前缀 URL]:url:_urls' \
+        '--default-subdir[默认发布子目录]:subdir:'
       ;;
-    arg)
-      case "$words[2]" in
-        init)
-          _arguments \
-            '--project-root[本地 html_test Git 项目目录]:directory:_directories' \
-            '--base-url[访问前缀 URL]:url:_urls' \
-            '--default-subdir[默认发布子目录]:subdir:'
-          ;;
-        config)
-          if (( CURRENT == 3 )); then
-            _describe -t config-commands 'config command' config_commands
-          fi
-          ;;
-        push)
-          _arguments \
-            '--subdir[发布到指定子目录]:subdir:' \
-            '--root[忽略默认子目录，直接发布到根目录]' \
-            '--name[发布时使用的目标目录名]:name:' \
-            '1:source directory:_directories'
-          ;;
-      esac
+    config)
+      if (( CURRENT == 3 )); then
+        _describe -t config-commands 'config command' config_commands
+      fi
+      ;;
+    push)
+      _arguments \
+        '--subdir[发布到指定子目录]:subdir:' \
+        '--root[忽略默认子目录，直接发布到根目录]' \
+        '--name[发布时使用的目标目录名]:name:' \
+        '1:source directory:_directories'
       ;;
   esac
 }
