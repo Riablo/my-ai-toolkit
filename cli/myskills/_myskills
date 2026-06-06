@@ -1,0 +1,50 @@
+#compdef myskills
+
+__myskills_skills() {
+  local -a skills
+  skills=("${(@f)$(myskills list 2>/dev/null | sed -E $'s/\x1b\\[[0-9;]*m//g' | awk '/^[[:space:]]+[^[:space:]]+/ {print $1}')}")
+  _describe -t skills 'skill' skills
+}
+
+_myskills() {
+  local curcontext="$curcontext" state line
+  typeset -A opt_args
+
+  local -a commands target_options
+  commands=(
+    'list:列出所有可用的 skills'
+    'link:将 skill 软链接到目标目录'
+    'install:将 skill 复制到目标目录并覆盖已有内容'
+    'unlink:移除 skill 的所有软链接'
+    'uninstall:移除通过 install 复制的 skill 目录'
+    'status:查看所有 skills 的状态'
+  )
+  target_options=(
+    '--agents[~/.agents/skills/]'
+    '--claude[~/.claude/skills/]'
+    '--local-agents[./.agents/skills/]'
+    '--local-claude[./.claude/skills/]'
+  )
+
+  _arguments -C \
+    '(-h --help)'{-h,--help}'[显示帮助信息]' \
+    '1:command:->command' \
+    '*::arg:->arg' && return
+
+  case "$state" in
+    command)
+      _describe -t commands 'command' commands
+      ;;
+    arg)
+      case "$words[2]" in
+        link|install|unlink|uninstall)
+          _arguments \
+            $target_options \
+            '*:skill:__myskills_skills'
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_myskills "$@"

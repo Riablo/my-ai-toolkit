@@ -1,0 +1,38 @@
+#compdef readlater-cli
+
+_readlater-cli() {
+  local curcontext="$curcontext" state line
+  typeset -A opt_args
+
+  local -a commands
+  commands=('fetch:抓取一个链接摘要')
+
+  _arguments -C \
+    '(-h --help)'{-h,--help}'[显示帮助信息]' \
+    '(-j --json)'{-j,--json}'[输出 JSON]' \
+    '--timeout[请求超时时间（秒）]:seconds:' \
+    '--summary-length[概要最大长度]:length:' \
+    '1:command or url:->first' \
+    '*::arg:->arg' && return
+
+  case "$state" in
+    first)
+      _alternative \
+        'commands:command:((fetch\\:抓取一个链接摘要))' \
+        'urls:url:_urls'
+      ;;
+    arg)
+      case "$words[2]" in
+        fetch)
+          _arguments \
+            '(-j --json)'{-j,--json}'[输出 JSON]' \
+            '--timeout[请求超时时间（秒）]:seconds:' \
+            '--summary-length[概要最大长度]:length:' \
+            '1:url:_urls'
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_readlater-cli "$@"

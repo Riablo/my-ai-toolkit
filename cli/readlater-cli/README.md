@@ -13,16 +13,15 @@
 ## 安装
 
 ```bash
-# 安装本仓库所有 CLI 到 ~/.local/bin
+# 安装本仓库所有 CLI 到 ~/.local/bin，并按当前 shell 安装补全
 bash scripts/install.sh
 ```
 
-或者手动复制：
+如需明确指定 shell：
 
 ```bash
-cp cli/readlater-cli/readlater-cli ~/.local/bin/
-cp cli/readlater-cli/readlater-cli.fish ~/.config/fish/completions/
-chmod +x ~/.local/bin/readlater-cli
+bash scripts/install.sh --shell zsh
+bash scripts/install.sh --shell fish
 ```
 
 ## 用法

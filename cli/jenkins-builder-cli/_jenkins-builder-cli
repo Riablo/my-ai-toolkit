@@ -1,0 +1,152 @@
+#compdef jenkins-builder-cli
+
+_jenkins-builder-cli() {
+  local curcontext="$curcontext" state line
+  typeset -A opt_args
+
+  local -a commands config_commands jobs_commands alias_commands runs_commands labels
+  commands=(
+    'config:管理本地配置'
+    'jobs:列出和管理 jobs'
+    'build:触发构建'
+    'set-branch:修改分支配置'
+    'runs:查看运行中的构建'
+    'logs:查看 console output'
+  )
+  config_commands=(
+    'init:初始化 Jenkins 配置'
+    'show:查看配置'
+    'edit:编辑配置文件'
+    'path:显示配置文件路径'
+    'check:检查配置是否可用'
+  )
+  jobs_commands=(
+    'list:列出可构建 jobs'
+    'label:标注 job 为测试服或正式服'
+    'unlabel:移除 job 标签'
+    'alias:管理 job 别称'
+  )
+  alias_commands=(
+    'list:列出 job 别称'
+    'add:添加 job 别称'
+    'rm:删除 job 别称'
+  )
+  runs_commands=(
+    'list:列出运行中的构建'
+    'status:查询某次构建的状态'
+    'stop:停止运行中的构建'
+  )
+  labels=(test prod)
+
+  _arguments -C \
+    '(-h --help)'{-h,--help}'[显示帮助信息]' \
+    '1:command:->command' \
+    '*::arg:->arg' && return
+
+  case "$state" in
+    command)
+      _describe -t commands 'command' commands
+      ;;
+    arg)
+      case "$words[2]" in
+        config)
+          case "$words[3]" in
+            init)
+              _arguments \
+                '--url[Jenkins URL]:url:_urls' \
+                '--username[用户名]:username:' \
+                '--token[API token]:token:' \
+                '--verify-ssl[是否校验证书]:verify ssl:(true false)'
+              ;;
+            show)
+              _arguments '--json[输出 JSON]'
+              ;;
+            *)
+              if (( CURRENT == 3 )); then
+                _describe -t config-commands 'config command' config_commands
+              fi
+              ;;
+          esac
+          ;;
+        jobs)
+          case "$words[3]" in
+            list)
+              _arguments \
+                '--query[按名称/标签/别称过滤]:query:' \
+                '--json[输出 JSON]'
+              ;;
+            label)
+              _arguments \
+                '--json[输出 JSON]' \
+                '1:job name or alias:' \
+                '2:label:($labels)'
+              ;;
+            unlabel)
+              _arguments \
+                '--json[输出 JSON]' \
+                '1:job name or alias:'
+              ;;
+            alias)
+              case "$words[4]" in
+                list)
+                  _arguments '--json[输出 JSON]'
+                  ;;
+                add|rm)
+                  _arguments \
+                    '--json[输出 JSON]' \
+                    '1:job name or alias:' \
+                    '2:alias:'
+                  ;;
+                *)
+                  if (( CURRENT == 4 )); then
+                    _describe -t alias-commands 'alias command' alias_commands
+                  fi
+                  ;;
+              esac
+              ;;
+            *)
+              if (( CURRENT == 3 )); then
+                _describe -t jobs-commands 'jobs command' jobs_commands
+              fi
+              ;;
+          esac
+          ;;
+        build)
+          _arguments \
+            '--follow[等待构建完成]' \
+            '--json[输出 JSON]' \
+            '1:job name or alias:'
+          ;;
+        set-branch)
+          _arguments \
+            '--json[输出 JSON]' \
+            '1:job name or alias:' \
+            '2:branch:'
+          ;;
+        runs)
+          case "$words[3]" in
+            list|status|stop)
+              _arguments \
+                '--json[输出 JSON]' \
+                '1:run id:'
+              ;;
+            *)
+              if (( CURRENT == 3 )); then
+                _describe -t runs-commands 'runs command' runs_commands
+              fi
+              ;;
+          esac
+          ;;
+        logs)
+          _arguments \
+            '--tail[仅展示最后 N 行]:lines:' \
+            '--follow[持续输出直到结束]' \
+            '--json[输出 JSON]' \
+            '1:run id:'
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_jenkins-builder-cli "$@"

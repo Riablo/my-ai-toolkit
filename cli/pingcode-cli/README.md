@@ -12,21 +12,8 @@ PingCode 命令行工具，无需打开浏览器即可查看和管理缺陷。
 ## 安装
 
 ```bash
-# 1. 将 pingcode-cli 复制到 PATH 中的任意目录
-cp pingcode-cli ~/.local/bin/
-
-# 2.（可选）安装 Fish Shell 补全
-cp pingcode-cli.fish ~/.config/fish/completions/
-```
-
-确保 `~/.local/bin` 在 PATH 中：
-
-```fish
-# fish
-fish_add_path ~/.local/bin
-
-# bash / zsh
-export PATH="$HOME/.local/bin:$PATH"
+# 在仓库根目录执行，自动安装 CLI、补全并更新当前 shell 配置
+bash scripts/install.sh
 ```
 
 ## 初始化配置

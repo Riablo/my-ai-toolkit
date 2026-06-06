@@ -1,0 +1,57 @@
+#compdef cloudsaver-cli
+
+_cloudsaver-cli() {
+  local curcontext="$curcontext" state line
+  typeset -A opt_args
+
+  local -a commands
+  commands=(
+    'search:搜索网盘资源'
+    's:搜索网盘资源'
+    'save:转存 115 网盘资源'
+    'sv:转存 115 网盘资源'
+    'config:管理配置'
+    'help:显示帮助信息'
+  )
+
+  _arguments -C \
+    '(-h --help)'{-h,--help}'[显示帮助信息]' \
+    '(-V --version)'{-V,--version}'[显示版本]' \
+    '1:command:->command' \
+    '*::arg:->arg' && return
+
+  case "$state" in
+    command)
+      _describe -t commands 'command' commands
+      ;;
+    arg)
+      case "$words[2]" in
+        search|s)
+          _arguments \
+            '--limit[限制结果数量]:limit:' \
+            '--no-table[不使用表格格式输出]' \
+            '*:keyword:'
+          ;;
+        save|sv)
+          _arguments \
+            '--folder[指定目标文件夹 ID]:folder id:' \
+            '*:url:_urls'
+          ;;
+        config)
+          _arguments \
+            '--set-cookie[设置 115 网盘 Cookie]' \
+            '--add-channel[添加 Telegram 搜索频道]' \
+            '--remove-channel[删除 Telegram 搜索频道]' \
+            '--set-proxy[设置 HTTP 代理]' \
+            '--show[显示当前配置]' \
+            '--check[检查当前配置是否可用]'
+          ;;
+        help)
+          _describe -t commands 'command' commands
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_cloudsaver-cli "$@"

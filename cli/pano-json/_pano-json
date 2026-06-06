@@ -1,0 +1,15 @@
+#compdef pano-json
+
+_pano-json() {
+  _arguments \
+    '(-h --help)'{-h,--help}'[显示帮助]' \
+    '--version[显示版本]' \
+    '(-o --output)'{-o,--output}'[输出文件路径；传 - 表示 stdout]:file:_files' \
+    '--base-url[JSON 相对路径的域名前缀]:url:_urls' \
+    '--timeout[请求超时时间（秒）]:seconds:' \
+    '--pretty[保存前格式化 JSON]' \
+    '--print-url[只输出解析后的 JSON 下载地址]' \
+    '1:720yun url or tour id:'
+}
+
+_pano-json "$@"

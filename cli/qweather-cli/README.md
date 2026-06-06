@@ -18,16 +18,15 @@ QWeather 命令行工具，基于和风天气开发服务的官方 HTTP API，�
 ## 安装
 
 ```bash
-# 安装本仓库所有 CLI 到 ~/.local/bin
+# 安装本仓库所有 CLI 到 ~/.local/bin，并按当前 shell 安装补全
 bash scripts/install.sh
 ```
 
-或者手动复制：
+如需明确指定 shell：
 
 ```bash
-cp cli/qweather-cli/qweather-cli ~/.local/bin/
-cp cli/qweather-cli/qweather-cli.fish ~/.config/fish/completions/
-chmod +x ~/.local/bin/qweather-cli
+bash scripts/install.sh --shell zsh
+bash scripts/install.sh --shell fish
 ```
 
 ## 初始化配置

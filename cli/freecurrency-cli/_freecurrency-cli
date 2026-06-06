@@ -1,0 +1,70 @@
+#compdef freecurrency-cli
+
+_freecurrency-cli() {
+  local curcontext="$curcontext" state line
+  typeset -A opt_args
+
+  local -a commands config_commands cache_commands currencies
+  commands=(
+    'init:初始化 App ID'
+    'config:查看配置'
+    'convert:按货币对换算金额'
+    'latest:查询最新汇率'
+    'cache:查看或清理缓存'
+  )
+  config_commands=(
+    'show:显示当前配置'
+    'path:输出配置文件路径'
+    'check:检查配置是否可用'
+  )
+  cache_commands=(
+    'info:显示缓存统计信息'
+    'clear:删除所有缓存'
+  )
+  currencies=(USD CNY EUR JPY HKD TWD GBP AUD CAD SGD KRW)
+
+  _arguments -C \
+    '(-h --help)'{-h,--help}'[显示帮助信息]' \
+    '1:command:->command' \
+    '*::arg:->arg' && return
+
+  case "$state" in
+    command)
+      _describe -t commands 'command' commands
+      ;;
+    arg)
+      case "$words[2]" in
+        init)
+          _arguments \
+            '--app-id[Open Exchange Rates App ID]:app id:' \
+            '--api-key[兼容旧参数名，等同于 --app-id]:app id:'
+          ;;
+        config)
+          if (( CURRENT == 3 )); then
+            _describe -t config-commands 'config command' config_commands
+          fi
+          ;;
+        convert)
+          _arguments \
+            '--json[输出详细 JSON]' \
+            '1:amount:' \
+            '2:from currency:($currencies)' \
+            '3:to marker:(to)' \
+            '4:to currency:($currencies)'
+          ;;
+        latest)
+          _arguments \
+            '--base[基准货币]:currency:($currencies)' \
+            '--currencies[目标货币列表]:currencies:($currencies)'
+          ;;
+        cache)
+          if (( CURRENT == 3 )); then
+            _describe -t cache-commands 'cache command' cache_commands
+          fi
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_freecurrency-cli "$@"

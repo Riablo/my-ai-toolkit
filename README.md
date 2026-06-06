@@ -8,23 +8,32 @@
 ## 安装
 
 ```bash
-# 将所有 CLI 工具软链接到 ~/.local/bin/，同时安装 Fish completions
+# 自动判断当前 shell，安装 CLI 工具及对应补全，并更新 shell rc 文件
 bash scripts/install.sh
-```
-
-首次安装后确保 `~/.local/bin` 在 PATH 中：
-
-```fish
-# fish
-fish_add_path ~/.local/bin
-
-# bash/zsh
-export PATH="$HOME/.local/bin:$PATH"
 ```
 
 安装脚本会自动：
 - 将 `cli/` 下所有工具软链接到 `~/.local/bin/`
-- 检测 Fish Shell 并安装补全到 `~/.config/fish/completions/`
+- 如果当前主 shell 是 zsh，安装补全到 `~/.zsh/completions/`，并在 `~/.zshrc` 的托管块中配置 `PATH`、`fpath` 和 `compinit`
+- 如果当前主 shell 是 fish，安装补全到 `~/.config/fish/completions/`，并在 `~/.config/fish/config.fish` 的托管块中配置 `PATH`
+- 在 `auto` 模式下先识别当前/父进程 shell；识别不到时结合 `$SHELL` 与已有 zsh 配置推断；仍无法识别时优先按 zsh 处理
+
+也可以显式指定：
+
+```bash
+bash scripts/install.sh --shell zsh      # 只安装 zsh 补全
+bash scripts/install.sh --shell fish     # 只安装 fish 补全
+bash scripts/install.sh --shell all      # 同时安装 zsh 和 fish 补全
+bash scripts/install.sh --no-rc          # 只安装文件，不修改 shell 配置
+```
+
+zsh 的 rc 配置默认使用 `standalone` 模式，会写入 `PATH`、`fpath` 并自行执行 `compinit`，适合全新机器或未知环境。如果你的 `.zshrc` 已经有统一的 `compinit`，可以使用更轻的集成模式：
+
+```bash
+bash scripts/install.sh --shell zsh --zsh-rc-mode integrated
+```
+
+`integrated` 只写入 `PATH` 和 `fpath`，并把托管块放到 `.zshrc` 开头，依赖后续已有的 `compinit` 统一加载补全。
 
 ## skills/
 

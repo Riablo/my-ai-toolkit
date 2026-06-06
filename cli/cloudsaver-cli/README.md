@@ -5,7 +5,7 @@
 - 从 Telegram 频道搜索网盘资源
 - 将 115 分享资源转存到自己的 115 网盘
 
-这次迁移主要做了仓库规范整理，没有主动改功能边界。当前仓库里的命令名统一为 `cloudsaver-cli`，并补上了标准入口、Fish 补全、README 以及配置兼容逻辑。
+这次迁移主要做了仓库规范整理，没有主动改功能边界。当前仓库里的命令名统一为 `cloudsaver-cli`，并补上了标准入口、zsh/Fish 补全、README 以及配置兼容逻辑。
 
 ## 环境要求
 
@@ -17,16 +17,15 @@
 ## 安装
 
 ```bash
-# 安装本仓库所有 CLI 到 ~/.local/bin
+# 安装本仓库所有 CLI 到 ~/.local/bin，并按当前 shell 安装补全
 bash scripts/install.sh
 ```
 
-或者手动复制：
+如需明确指定 shell：
 
 ```bash
-cp cli/cloudsaver-cli/cloudsaver-cli ~/.local/bin/
-cp cli/cloudsaver-cli/cloudsaver-cli.fish ~/.config/fish/completions/
-chmod +x ~/.local/bin/cloudsaver-cli
+bash scripts/install.sh --shell zsh
+bash scripts/install.sh --shell fish
 ```
 
 ## 配置位置

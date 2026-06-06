@@ -13,8 +13,9 @@ skills/<skill-name>/SKILL.md     # skill 主文件（必需）
 skills/<skill-name>/references/  # 参考文档（可选）
 skills/<skill-name>/scripts/     # 辅助脚本（可选）
 cli/<tool-name>/<tool-name>      # CLI 可执行文件（必需，bash 脚本）
-cli/<tool-name>/<tool-name>.fish # Fish Shell 补全（可选）
-scripts/install.sh               # 安装脚本，软链 CLI 工具 + Fish 补全
+cli/<tool-name>/_<tool-name>     # zsh 补全（推荐）
+cli/<tool-name>/<tool-name>.fish # Fish Shell 补全（兼容）
+scripts/install.sh               # 安装脚本，软链 CLI 工具 + zsh/Fish 补全
 ```
 
 ## 约定
@@ -26,8 +27,9 @@ scripts/install.sh               # 安装脚本，软链 CLI 工具 + Fish 补�
 - Skill 目录必须包含 `SKILL.md`，install.sh 和 myskills 通过此文件识别 skill
 - CLI 工具目录下的同名文件即为入口（如 `cli/myskills/myskills`）
 - 安装方式：`bash scripts/install.sh`，软链接到 `~/.local/bin/`
-- 用户主要使用 Fish Shell，CLI 工具应提供 `.fish` 补全文件
-- Fish 补全安装到 `~/.config/fish/completions/`（install.sh 自动处理）
+- 用户主要使用 zsh，CLI 工具应优先提供 zsh 补全文件 `_tool-name`
+- 兼顾 Fish Shell，已有或适合补充的 CLI 可继续提供 `.fish` 补全文件
+- zsh 补全安装到 `~/.zsh/completions/`，Fish 补全安装到 `~/.config/fish/completions/`（install.sh 自动判断或通过 `--shell` 指定）
 - Skill 中的 Python 脚本统一使用 uv 执行（PEP 723 内联元数据，无需 requirements.txt）
 - Skill 的配置文件统一存放在 `~/.config/<skill-name>/` 目录下
 - Skill 若依赖配置文件，必须在每次执行前校验：文件不存在时引导用户初始化，文件存在但缺少必要字段或值无效时提醒用户并协助修复，不得静默跳过或使用未经校验的配置
