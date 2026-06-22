@@ -1,0 +1,4 @@
+interface:
+  display_name: "My Notion"
+  short_description: "Log supported personal records via Notion API."
+  default_prompt: "Use $my-notion to log a movie, album, or TV series into Notion."
