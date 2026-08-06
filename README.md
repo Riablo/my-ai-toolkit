@@ -73,7 +73,7 @@ Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/s
 | [freecurrency-cli](cli/freecurrency-cli/) | Open Exchange Rates 汇率工具（金额换算 / 最新汇率 / 本地缓存） |
 | [myskills](cli/myskills/) | 管理 AI Skills 的链接、安装与卸载（list / link / install / unlink / uninstall / status） |
 | [pano-json](cli/pano-json/) | 下载 720 云作品源码中 `window.json` 指向的原始 JSON |
-| [pingcode-cli](cli/pingcode-cli/) | PingCode 命令行工具（bugs 列表等） |
+| [pingcode-cli](cli/pingcode-cli/) | 使用 PingCode 官方 API 查询与更新 bugs |
 | [qweather-cli](cli/qweather-cli/) | QWeather 命令行工具（实时天气 / 每日预报 / 逐小时预报） |
 | [readlater-cli](cli/readlater-cli/) | 极简 read-it-later 抓取工具（URL 标题 / 简单概要 / JSON 输出，X/Twitter 优先走 oEmbed） |
 | [jenkins-builder-cli](cli/jenkins-builder-cli/) | Jenkins 构建命令行工具（实时 jobs / 标签与别称 / 触发构建 / 改分支 / 日志 / 停止） |

@@ -1,46 +1,75 @@
 #compdef pingcode-cli
 
+_pingcode_config_file() {
+  print -r -- "${XDG_CONFIG_HOME:-${HOME}/.config}/pingcode-cli/config.json"
+}
+
+_pingcode_projects() {
+  local file
+  file="$(_pingcode_config_file)"
+  [[ -r "$file" ]] && jq -r '.projects[]?.name' "$file" 2>/dev/null
+}
+
+_pingcode_states() {
+  local file project="" index
+  file="$(_pingcode_config_file)"
+  for (( index = 3; index <= ${#words}; index++ )); do
+    case "${words[index]}" in
+      --project)
+        project="${words[index + 1]:-}"
+        ;;
+      --project=*)
+        project="${words[index]#*=}"
+        ;;
+    esac
+  done
+  if [[ -r "$file" && -n "$project" ]]; then
+    jq -r --arg project "$project" '[.projects[]? | select(.name == $project) | .states[]?.name] | unique[]' "$file" 2>/dev/null
+  elif [[ -r "$file" ]]; then
+    jq -r '[.projects[]?.states[]?.name] | unique[]' "$file" 2>/dev/null
+  fi
+}
+
 _pingcode-cli() {
-  local -a commands config_commands states
+  local command="$words[2]"
+  local -a commands projects states
   commands=(
-    'bugs:列出我的未解决缺陷'
-    'set-state:修改缺陷状态'
-    'config:管理配置'
-  )
-  config_commands=(
-    'show:查看当前配置'
     'init:初始化配置'
-    'edit:编辑配置文件'
-    'path:显示配置文件路径'
-    'check:检查配置是否可用'
+    'auth:获取或刷新用户令牌'
+    'projects:查看或刷新项目缓存'
+    'bugs:获取 bug 列表'
+    'bug:获取一个 bug'
+    'set-state:修改 bug 状态'
   )
-  states=(待处理 处理中 已修复 重新打开 挂起)
+  projects=("${(@f)$(_pingcode_projects)}")
+  states=("${(@f)$(_pingcode_states)}")
 
   if (( CURRENT == 2 )); then
-    if [[ "$PREFIX" == -* ]]; then
-      _arguments '(-h --help)'{-h,--help}'[显示帮助信息]'
-    else
-      _describe -t commands 'command' commands
-    fi
+    _describe -t commands '命令' commands
     return
   fi
 
-  case "$words[2]" in
+  shift words
+  (( CURRENT-- ))
+  case "$command" in
+    init|auth)
+      _arguments '(-h --help)'{-h,--help}'[显示帮助]'
+      ;;
+    projects)
+      _arguments '(-h --help)'{-h,--help}'[显示帮助]' '1:子命令:(refresh)'
+      ;;
     bugs)
       _arguments \
-        '--debug[打印原始 API 响应]' \
-        '--json[以 JSON 格式输出缺陷列表]' \
-        '1:limit:'
+        '(-h --help)'{-h,--help}'[显示帮助]' \
+        '--project[项目名称]:项目名称:($projects)' \
+        '*--state[状态名称，可重复]:状态名称:($states)' \
+        '--created-after[覆盖全局 created_at 起点]:Unix 秒数:'
+      ;;
+    bug)
+      _arguments '(-h --help)'{-h,--help}'[显示帮助]' '1:bug id:'
       ;;
     set-state)
-      _arguments \
-        '1:bug id:' \
-        '2:state:($states)'
-      ;;
-    config)
-      if (( CURRENT == 3 )); then
-        _describe -t config-commands 'config command' config_commands
-      fi
+      _arguments '(-h --help)'{-h,--help}'[显示帮助]' '1:bug id:' '2:状态名称:($states)'
       ;;
   esac
 }

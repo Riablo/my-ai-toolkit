@@ -1,70 +1,65 @@
 # pingcode-cli
 
-PingCode 命令行工具，无需打开浏览器即可查看和管理缺陷。
+通过 PingCode 官方 REST API 查询和更新分配给自己的 bug。
 
-## 环境要求
+## 依赖
 
-- macOS 或 Linux
-- bash 5.0+（macOS 自带 3.2 不够用，需 `brew install bash`）
+- bash 5.0+
 - curl
-- python3（macOS 自带）
+- jq
 
-## 安装
-
-```bash
-# 在仓库根目录执行，自动安装 CLI、补全并更新当前 shell 配置
-bash scripts/install.sh
-```
-
-## 初始化配置
-
-首次运行时会引导你完成配置：
+## 初始化与鉴权
 
 ```bash
-pingcode-cli bugs
+# 交互输入 client_id、client_secret、my_assignee_id，
+# 并选择是否设置全局 created_at 起点
+pingcode-cli init
+
+# 输出授权地址，等待手动输入 code
+pingcode-cli auth
 ```
 
-按照提示操作：
+配置保存在 `~/.config/pingcode-cli/config.json`，权限为 `600`。`access_token`
+过期后会自动使用 `refresh_token` 刷新；刷新失败时重新输出授权地址并等待新的
+`code`。
 
-1. 打开 PingCode 缺陷列表页面
-2. 按 F12 打开开发者工具 → Network 标签
-3. 刷新页面，找到 `content` 请求
-4. 右键该请求 → Copy → Copy as cURL
-5. 粘贴到终端，按回车
-
-工具会自动从 cURL 命令中解析出所有必要配置（URL、Cookie、项目 ID、视图过滤条件等），保存到 `~/.config/pingcode-cli/config`。
-
-## 使用
+## 项目缓存
 
 ```bash
-# 列出我的未解决缺陷
-pingcode-cli bugs
-pingcode-cli bugs 100
-pingcode-cli bugs --debug
-pingcode-cli bugs --json
+# 首次使用时自动获取；输出当前缓存
+pingcode-cli projects
 
-# 修改缺陷状态
-pingcode-cli set-state 720YUN-10515 已修复
-pingcode-cli set-state 720YUN-10515 处理中
-
-# 可用状态：待处理、处理中、已修复、重新打开、挂起
-
-# 查看 / 编辑配置
-pingcode-cli config show
-pingcode-cli config edit
-pingcode-cli config check
-
-# Cookie 过期后重新初始化
-pingcode-cli config init
-
-# 查看帮助
-pingcode-cli -h
-pingcode-cli config -h
+# 手动刷新全部项目及各项目的 bug 状态
+pingcode-cli projects refresh
 ```
 
-## 注意事项
+配置只缓存项目和状态的 `id`、`name`。项目名称和状态名称会从这份缓存提供 zsh
+与 Fish 自动补全。
 
-- 会话 Cookie 会过期，过期后重新运行 `pingcode-cli config init`，从浏览器复制新的 cURL 即可
-- `bugs` 会使用 cURL 中的 `created_at` 起始时间；旧配置缺少该字段时默认从 2020-01-01 开始查询
-- 配置文件权限为 600（仅本人可读写）
-- `set-state` 依赖 `bugs` 命令缓存的数据来查找缺陷 ID，如果报错找不到缺陷，先运行一次 `pingcode-cli bugs`
+## Bug
+
+```bash
+# 查询项目内全部状态
+pingcode-cli bugs --project '项目名称'
+
+# 一个或多个状态：CLI 分别请求后合并去重
+pingcode-cli bugs --project '项目名称' --state '新提交' --state '处理中'
+
+# 临时覆盖全局 created_at 起点
+pingcode-cli bugs --project '项目名称' --created-after 1735689600
+
+# 获取单个 bug（参数是 API 返回的 id）
+pingcode-cli bug 5edca112b06305c524cad2fa
+
+# 按当前项目缓存中的状态名称更新
+pingcode-cli set-state 5edca112b06305c524cad2fa '已修复'
+```
+
+命令输出 JSON，只保留 `id`、`identifier`、`title`、`html_url`、`state` 和
+`description`。列表的时间过滤使用 `created_at > 时间戳`。
+
+## API 文档
+
+- [PingCode REST API 索引](https://pingcode.apifox.cn/llms.txt)
+- [获取/刷新用户令牌](https://pingcode.apifox.cn/api-101722142.md)
+- [项目与工作项 API](https://pingcode.apifox.cn/api-101826052.md)

@@ -1,604 +1,668 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ─── 颜色 ────────────────────────────────────────────────────────
-BOLD='\033[1m'
-DIM='\033[2m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-RED='\033[0;31m'
-CYAN='\033[0;36m'
-RESET='\033[0m'
+API_BASE="https://open.pingcode.com"
+CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/pingcode-cli"
+CONFIG_FILE="${CONFIG_DIR}/config.json"
 
-# ─── 配置 ────────────────────────────────────────────────────────
-CONFIG_DIR="${HOME}/.config/pingcode-cli"
-CONFIG_FILE="${CONFIG_DIR}/config"
-CACHE_FILE="${CONFIG_DIR}/bugs_cache.json"
-DEFAULT_CREATED_AFTER=1577808000
-
-die() { echo -e "${RED}错误：$1${RESET}" >&2; exit 1; }
-
-config_get() {
-  local key="$1"
-  grep -E "^${key}=" "$CONFIG_FILE" 2>/dev/null | head -1 | sed "s/^${key}=//" || true
+die() {
+  printf '错误：%s\n' "$1" >&2
+  exit 1
 }
 
-validate_config_file() {
-  [ -f "$CONFIG_FILE" ] || die "尚未初始化配置。运行 pingcode-cli config init"
+need_arg() {
+  [ "$#" -ge 2 ] && [ -n "$2" ] || die "$1 需要参数"
+}
 
-  local missing=()
-  local key
-  for key in base_url session_cookie project_id view_id; do
-    local val
-    val="$(config_get "$key")"
-    if [ -z "$val" ]; then
-      missing+=("$key")
-    fi
+require_commands() {
+  local command
+  for command in curl jq; do
+    command -v "$command" >/dev/null 2>&1 || die "缺少依赖：${command}"
   done
-
-  if [ ${#missing[@]} -gt 0 ]; then
-    die "配置文件缺少以下字段：${missing[*]}\n请编辑 ${CONFIG_FILE} 补全配置，或删除后重新初始化。"
-  fi
-
-  local created_after
-  created_after="$(config_get created_after)"
-  if [ -n "$created_after" ] && ! [[ "$created_after" =~ ^[0-9]+$ ]]; then
-    die "配置字段 created_after 必须是 Unix 时间戳秒数：${created_after}"
-  fi
 }
 
-# ─── 状态映射 ─────────────────────────────────────────────────────
-# 状态名 → state_id
-declare -A STATE_MAP=(
-  [待处理]=5f3a1c2fc2742c538a7dcbcb
-  [处理中]=5f3a1c2fc2742cef1d7dcbcc
-  [已修复]=5f3a1c2fc2742c20e17dcbcd
-  [重新打开]=5f3a1c2fc2742c17f27dcbce
-  [挂起]=5f3a1c2fc2742c5fc47dcbd1
-)
+validate_timestamp() {
+  [[ "$1" =~ ^[0-9]+$ ]] || die "时间戳必须是 Unix 秒数：$1"
+}
 
-# state_id → 状态名
-declare -A STATE_NAME_MAP=(
-  [5f3a1c2fc2742c538a7dcbcb]=待处理
-  [5f3a1c2fc2742cef1d7dcbcc]=处理中
-  [5f3a1c2fc2742c20e17dcbcd]=已修复
-  [5f3a1c2fc2742c17f27dcbce]=重新打开
-  [5f3a1c2fc2742c5fc47dcbd1]=挂起
-)
+validate_config() {
+  [ -f "$CONFIG_FILE" ] || die "尚未初始化。请先运行 pingcode-cli init"
+  jq -e 'type == "object"' "$CONFIG_FILE" >/dev/null 2>&1 ||
+    die "配置文件不是有效的 JSON：${CONFIG_FILE}"
 
-# ─── 配置校验与初始化 ─────────────────────────────────────────────
-ensure_config() {
-  if [ ! -f "$CONFIG_FILE" ]; then
-    echo -e "${YELLOW}首次使用，需要初始化配置。${RESET}"
-    echo ""
-    init_config
+  local key missing=()
+  for key in client_id client_secret my_assignee_id; do
+    jq -e --arg key "$key" '(.[$key] | type == "string" and length > 0)' "$CONFIG_FILE" >/dev/null 2>&1 ||
+      missing+=("$key")
+  done
+  [ "${#missing[@]}" -eq 0 ] ||
+    die "配置缺少必要字段：${missing[*]}。请补全 ${CONFIG_FILE}，或重新运行 pingcode-cli init"
+
+  jq -e '
+    (.created_after == null) or
+    ((.created_after | type) == "number" and .created_after >= 0 and .created_after == (.created_after | floor))
+  ' "$CONFIG_FILE" >/dev/null 2>&1 || die "配置字段 created_after 必须是 null 或 Unix 秒数"
+  jq -e '(.projects // [] | type == "array")' "$CONFIG_FILE" >/dev/null 2>&1 ||
+    die "配置字段 projects 必须是数组"
+}
+
+write_config() {
+  local filter="$1"
+  shift
+  local tmp
+  tmp="$(mktemp "${CONFIG_DIR}/config.XXXXXX")"
+  jq "$@" "$filter" "$CONFIG_FILE" > "$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$CONFIG_FILE"
+}
+
+cmd_init() {
+  [ "$#" -eq 0 ] || die "init 不接受参数"
+  local client_id client_secret my_assignee_id set_created_after created_after=""
+  IFS= read -r -p 'client_id: ' client_id
+  IFS= read -r -s -p 'client_secret: ' client_secret
+  printf '\n' >&2
+  IFS= read -r -p 'my_assignee_id: ' my_assignee_id
+  [ -n "$client_id" ] || die "client_id 不能为空"
+  [ -n "$client_secret" ] || die "client_secret 不能为空"
+  [ -n "$my_assignee_id" ] || die "my_assignee_id 不能为空"
+  IFS= read -r -p '是否设置全局 created_at 起点？[y/N]: ' set_created_after
+  case "$set_created_after" in
+    y|Y|yes|YES|是)
+      IFS= read -r -p 'created_after（Unix 秒数）: ' created_after
+      validate_timestamp "$created_after"
+      ;;
+  esac
+
+  mkdir -p "$CONFIG_DIR"
+  local tmp
+  tmp="$(mktemp "${CONFIG_DIR}/config.XXXXXX")"
+  jq -n \
+    --arg client_id "$client_id" \
+    --arg client_secret "$client_secret" \
+    --arg my_assignee_id "$my_assignee_id" \
+    --arg created_after "$created_after" '
+      {
+        client_id: $client_id,
+        client_secret: $client_secret,
+        my_assignee_id: $my_assignee_id,
+        created_after: (if $created_after == "" then null else ($created_after | tonumber) end),
+        access_token: null,
+        refresh_token: null,
+        expires_in: null,
+        token_obtained_at: null,
+        projects: [],
+        projects_refreshed_at: null
+      }
+    ' > "$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$CONFIG_FILE"
+  printf '配置已保存到 %s\n' "$CONFIG_FILE" >&2
+}
+
+HTTP_STATUS=""
+HTTP_BODY=""
+
+http_request() {
+  local method="$1" url="$2"
+  shift 2
+  local raw
+  raw="$(curl --silent --show-error --location \
+    --connect-timeout 10 --max-time 60 \
+    --request "$method" --write-out $'\n%{http_code}' \
+    "$url" "$@")" || die "网络请求失败：${url}"
+  HTTP_STATUS="${raw##*$'\n'}"
+  HTTP_BODY="${raw%$'\n'*}"
+  [[ "$HTTP_STATUS" =~ ^[0-9]{3}$ ]] || die "无法读取 HTTP 状态码"
+}
+
+save_tokens() {
+  local response="$1" fallback_refresh="${2:-}"
+  jq -e '
+    (.access_token | type == "string" and length > 0) and
+    ((.expires_in | type) == "number" and .expires_in > 0 and .expires_in == (.expires_in | floor))
+  ' <<< "$response" >/dev/null 2>&1 || return 1
+
+  local access_token refresh_token expires_in obtained_at
+  access_token="$(jq -r '.access_token' <<< "$response")"
+  refresh_token="$(jq -r '.refresh_token // empty' <<< "$response")"
+  refresh_token="${refresh_token:-$fallback_refresh}"
+  [ -n "$refresh_token" ] || return 1
+  expires_in="$(jq -r '.expires_in' <<< "$response")"
+  obtained_at="$(date +%s)"
+
+  write_config '
+    .access_token = $access_token |
+    .refresh_token = $refresh_token |
+    .expires_in = $expires_in |
+    .token_obtained_at = $obtained_at
+  ' --arg access_token "$access_token" \
+    --arg refresh_token "$refresh_token" \
+    --argjson expires_in "$expires_in" \
+    --argjson obtained_at "$obtained_at"
+}
+
+request_tokens() {
+  local grant_type="$1" value="$2" fallback_refresh="${3:-}"
+  local client_id client_secret
+  client_id="$(jq -r '.client_id' "$CONFIG_FILE")"
+  client_secret="$(jq -r '.client_secret' "$CONFIG_FILE")"
+
+  if [ "$grant_type" = "authorization_code" ]; then
+    http_request GET "${API_BASE}/v1/auth/token" --get \
+      --data-urlencode 'grant_type=authorization_code' \
+      --data-urlencode "client_id=${client_id}" \
+      --data-urlencode "client_secret=${client_secret}" \
+      --data-urlencode "code=${value}"
+  else
+    http_request GET "${API_BASE}/v1/auth/token" --get \
+      --data-urlencode 'grant_type=refresh_token' \
+      --data-urlencode "refresh_token=${value}"
+  fi
+
+  [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ] || return 1
+  save_tokens "$HTTP_BODY" "$fallback_refresh"
+}
+
+clear_tokens() {
+  write_config '
+    .access_token = null |
+    .refresh_token = null |
+    .expires_in = null |
+    .token_obtained_at = null
+  '
+}
+
+token_is_valid() {
+  local access_token expires_in obtained_at now
+  access_token="$(jq -r '.access_token // empty' "$CONFIG_FILE")"
+  expires_in="$(jq -r '.expires_in // 0' "$CONFIG_FILE")"
+  obtained_at="$(jq -r '.token_obtained_at // 0' "$CONFIG_FILE")"
+  [[ "$expires_in" =~ ^[0-9]+$ && "$obtained_at" =~ ^[0-9]+$ ]] || return 1
+  now="$(date +%s)"
+  [ -n "$access_token" ] && (( obtained_at + expires_in > now + 60 ))
+}
+
+authorize_with_code() {
+  local client_id encoded_client_id code
+  client_id="$(jq -r '.client_id' "$CONFIG_FILE")"
+  encoded_client_id="$(jq -nr --arg value "$client_id" '$value | @uri')"
+  printf '请手动打开以下地址完成授权：\n%s\n' \
+    "https://open.pingcode.com/oauth2/authorize?response_type=code&client_id=${encoded_client_id}" >&2
+  IFS= read -r -p 'code: ' code
+  [ -n "$code" ] || die "code 不能为空"
+  request_tokens authorization_code "$code" ||
+    die "获取令牌失败（HTTP ${HTTP_STATUS}）：${HTTP_BODY}"
+  printf '鉴权成功，令牌已保存。\n' >&2
+}
+
+try_refresh_token() {
+  local refresh_token
+  refresh_token="$(jq -r '.refresh_token // empty' "$CONFIG_FILE")"
+  [ -n "$refresh_token" ] || return 1
+  printf 'access_token 已过期，正在刷新...\n' >&2
+  if request_tokens refresh_token "$refresh_token" "$refresh_token"; then
+    printf '令牌已刷新。\n' >&2
+    return 0
+  fi
+  case "$HTTP_STATUS" in
+    400|401) ;;
+    *) die "刷新令牌失败（HTTP ${HTTP_STATUS}）：${HTTP_BODY}" ;;
+  esac
+  printf 'refresh_token 已失效，需要重新授权。\n' >&2
+  return 1
+}
+
+renew_token() {
+  if try_refresh_token; then
     return
   fi
-
-  validate_config_file
+  clear_tokens
+  authorize_with_code
 }
 
-init_config() {
-  mkdir -p "$CONFIG_DIR"
-
-  echo -e "${BOLD}请从浏览器复制 cURL 命令：${RESET}"
-  echo ""
-  echo -e "  1. 打开 PingCode 缺陷列表页面"
-  echo -e "  2. 按 F12 打开开发者工具 → Network 标签"
-  echo -e "  3. 刷新页面，找到 ${CYAN}content${RESET} 请求"
-  echo -e "  4. 右键该请求 → ${CYAN}Copy → Copy as cURL${RESET}"
-  echo -e "  5. 粘贴到下方（会自动解析所有配置）"
-  echo ""
-  echo -e "${DIM}粘贴 cURL 命令（支持多行，粘贴完按回车）：${RESET}"
-
-  local curl_text=""
-  local line
-  while IFS= read -r line; do
-    # 空行表示输入结束
-    [ -z "$line" ] && [ -n "$curl_text" ] && break
-    curl_text+="$line"$'\n'
-  done
-
-  [ -n "$curl_text" ] || die "输入不能为空"
-
-  # 合并续行符（行尾 \ 连接下一行）
-  curl_text="$(echo "$curl_text" | perl -0pe 's/\\\n\s*//g')"
-
-  # 解析 URL → base_url, project_id, view_id
-  local full_url
-  full_url="$(echo "$curl_text" | grep -oE "https?://[^'\"[:space:]]+" | head -1)"
-  [ -n "$full_url" ] || die "无法从 cURL 中解析出 URL"
-
-  local base_url
-  base_url="$(echo "$full_url" | grep -oE 'https?://[^/]+')"
-
-  local project_id
-  project_id="$(echo "$full_url" | grep -oE '/projects/([a-f0-9]+)/' | sed 's|/projects/||;s|/||')"
-  [ -n "$project_id" ] || die "无法从 URL 中解析出 project_id"
-
-  local view_id
-  view_id="$(echo "$full_url" | grep -oE '/views/([a-f0-9]+)/' | sed 's|/views/||;s|/||')"
-  [ -n "$view_id" ] || die "无法从 URL 中解析出 view_id"
-
-  # 解析 session cookie（s-xxx=yyy）
-  local session_cookie
-  session_cookie="$(echo "$curl_text" | grep -oE 's-[a-f0-9]+=[a-f0-9]+' | head -1)"
-  [ -n "$session_cookie" ] || die "无法从 cURL 中解析出会话 Cookie（s-xxx=yyy 格式）"
-
-  # 解析 request body 中的 addon_setting_id
-  local addon_setting_id
-  addon_setting_id="$(echo "$curl_text" | grep -oE '"addon_setting_id"\s*:\s*"[a-f0-9]+"' | grep -oE '[a-f0-9]{20,}' | head -1)"
-  addon_setting_id="${addon_setting_id:-607434d7f10c20001763c188}"
-
-  # 解析 state_ids
-  local state_ids
-  state_ids="$(echo "$curl_text" | grep -oE '"state_id".*?\]' | grep -oE '[a-f0-9]{24}' | paste -sd',' -)"
-  state_ids="${state_ids:-5f3a1c2fc2742c538a7dcbcb,5f3a1c2fc2742c17f27dcbce}"
-
-  # 解析 created_at 起始时间。旧版本曾硬编码为 2025-01-01，容易把历史缺陷过滤掉。
-  local created_after
-  created_after="$(printf "%s" "$curl_text" | perl -0ne 'if (/"property_key"\s*:\s*"created_at".*?"value"\s*:\s*([0-9]+)/s) { print $1; exit }')"
-  created_after="${created_after:-$DEFAULT_CREATED_AFTER}"
-
-  echo ""
-  echo -e "${BOLD}解析结果：${RESET}"
-  echo -e "  ${CYAN}base_url${RESET}=${base_url}"
-  echo -e "  ${CYAN}project_id${RESET}=${project_id}"
-  echo -e "  ${CYAN}view_id${RESET}=${view_id}"
-  echo -e "  ${CYAN}session_cookie${RESET}=****（已隐藏）"
-  echo -e "  ${CYAN}addon_setting_id${RESET}=${addon_setting_id}"
-  echo -e "  ${CYAN}state_ids${RESET}=${state_ids}"
-  echo -e "  ${CYAN}created_after${RESET}=${created_after}"
-
-  cat > "$CONFIG_FILE" <<EOF
-# PingCode CLI 配置文件
-# 实例 URL
-base_url=${base_url}
-# 会话 Cookie（s-xxx=yyy 格式）
-session_cookie=${session_cookie}
-# 项目 ID
-project_id=${project_id}
-# 视图 ID
-view_id=${view_id}
-# 未解决状态 ID（逗号分隔）
-state_ids=${state_ids}
-# addon_setting_id
-addon_setting_id=${addon_setting_id}
-# 创建时间起点（Unix 时间戳秒数）
-created_after=${created_after}
-EOF
-
-  chmod 600 "$CONFIG_FILE"
-  echo ""
-  echo -e "${GREEN}配置已保存到 ${CONFIG_FILE}${RESET}"
+ensure_token() {
+  validate_config
+  token_is_valid || renew_token
 }
 
-# ─── API 请求 ─────────────────────────────────────────────────────
-api_post() {
-  local endpoint="$1"
-  local data="$2"
-  local base_url session_cookie http_code body
-  base_url="$(config_get base_url)"
-  session_cookie="$(config_get session_cookie)"
-
-  # 获取 HTTP 状态码和响应体
-  local tmpfile
-  tmpfile="$(mktemp)"
-  http_code="$(curl -s -w '%{http_code}' -o "$tmpfile" \
-    "${base_url}${endpoint}" \
-    -H 'Accept: application/json, text/plain, */*' \
-    -H 'Content-Type: application/json' \
-    -H 'Cache-Control: no-cache' \
-    -b "${session_cookie}" \
-    --data-raw "$data")"
-
-  body="$(cat "$tmpfile")"
-  rm -f "$tmpfile"
-
-  if [ "$http_code" -ge 400 ] 2>/dev/null; then
-    echo -e "${RED}HTTP ${http_code}${RESET}" >&2
-    echo "$body" >&2
-    return 1
+cmd_auth() {
+  [ "$#" -eq 0 ] || die "auth 不接受参数"
+  validate_config
+  if token_is_valid; then
+    printf 'access_token 仍然有效。\n' >&2
+    return
   fi
-
-  echo "$body"
+  renew_token
 }
 
-# ─── bugs 命令 ─────────────────────────────────────────────────────
+api_request() {
+  local method="$1" endpoint="$2"
+  shift 2
+  ensure_token
+  local token
+  token="$(jq -r '.access_token' "$CONFIG_FILE")"
+  http_request "$method" "${API_BASE}${endpoint}" \
+    -H 'Accept: application/json' \
+    -H "Authorization: Bearer ${token}" "$@"
+
+  if [ "$HTTP_STATUS" = "401" ]; then
+    renew_token
+    token="$(jq -r '.access_token' "$CONFIG_FILE")"
+    http_request "$method" "${API_BASE}${endpoint}" \
+      -H 'Accept: application/json' \
+      -H "Authorization: Bearer ${token}" "$@"
+  fi
+  [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ] ||
+    die "PingCode API 请求失败（HTTP ${HTTP_STATUS}）：${HTTP_BODY}"
+  printf '%s\n' "$HTTP_BODY"
+}
+
+fetch_projects() {
+  local page=0 all='[]' previous_count=-1 response page_count total count
+  while :; do
+    response="$(api_request GET '/v1/project/projects' --get \
+      --data-urlencode "page_index=${page}" --data-urlencode 'page_size=100')"
+    jq -e '.values | type == "array"' <<< "$response" >/dev/null 2>&1 ||
+      die "项目列表响应缺少 values 数组"
+    all="$(jq -cn --argjson old "$all" --argjson new "$(jq '.values' <<< "$response")" \
+      '$old + $new | map(select((.id | type) == "string" and (.name | type) == "string")) | unique_by(.id)')"
+    page_count="$(jq '.values | length' <<< "$response")"
+    total="$(jq -er '
+      (.total // (.values | length)) as $total |
+      select(($total | type) == "number" and $total >= 0 and $total == ($total | floor)) |
+      $total
+    ' <<< "$response")" || die "项目列表响应的 total 无效"
+    count="$(jq 'length' <<< "$all")"
+    (( count >= total )) && break
+    (( page_count > 0 && count > previous_count )) || die "项目列表分页没有前进，已停止请求"
+    previous_count="$count"
+    page=$((page + 1))
+  done
+  printf '%s\n' "$all"
+}
+
+cmd_projects_refresh() {
+  validate_config
+  local raw_projects projects='[]' project project_id project_name response states cached_project
+  raw_projects="$(fetch_projects)"
+  while IFS= read -r project; do
+    project_id="$(jq -r '.id' <<< "$project")"
+    project_name="$(jq -r '.name' <<< "$project")"
+    response="$(api_request GET '/v1/project/work_item/states' --get \
+      --data-urlencode "project_id=${project_id}" \
+      --data-urlencode 'work_item_type_id=bug' \
+      --data-urlencode 'page_index=0' \
+      --data-urlencode 'page_size=100')"
+    jq -e '.values | type == "array"' <<< "$response" >/dev/null 2>&1 ||
+      die "项目 ${project_name} 的状态响应缺少 values 数组"
+    states="$(jq '[.values[] | select((.id | type) == "string" and (.name | type) == "string") | {id, name}] | unique_by(.id)' <<< "$response")"
+    cached_project="$(jq -cn --arg id "$project_id" --arg name "$project_name" --argjson states "$states" \
+      '{id: $id, name: $name, states: $states}')"
+    projects="$(jq -cn --argjson projects "$projects" --argjson project "$cached_project" '$projects + [$project]')"
+  done < <(jq -c '.[]' <<< "$raw_projects")
+
+  local refreshed_at
+  refreshed_at="$(date +%s)"
+  write_config '.projects = $projects | .projects_refreshed_at = $refreshed_at' \
+    --argjson projects "$projects" --argjson refreshed_at "$refreshed_at"
+  printf '已缓存 %s 个项目及其 bug 状态。\n' "$(jq 'length' <<< "$projects")" >&2
+}
+
+projects_cache_is_valid() {
+  jq -e '
+    ((.projects_refreshed_at | type) == "number") and
+    (.projects | type == "array") and
+    all(.projects[];
+      (.id | type == "string" and length > 0) and
+      (.name | type == "string" and length > 0) and
+      (.states | type == "array") and
+      all(.states[]; (.id | type == "string" and length > 0) and (.name | type == "string" and length > 0))
+    )
+  ' "$CONFIG_FILE" >/dev/null 2>&1
+}
+
+ensure_projects() {
+  validate_config
+  if ! projects_cache_is_valid; then
+    printf '项目缓存不存在或不完整，正在获取...\n' >&2
+    cmd_projects_refresh
+  fi
+}
+
+cmd_projects() {
+  [ "$#" -le 1 ] || die "用法：pingcode-cli projects [refresh]"
+  local subcommand="${1:-}"
+  case "$subcommand" in
+    "") ensure_projects ;;
+    refresh) cmd_projects_refresh ;;
+    *) die "未知 projects 子命令：${subcommand}" ;;
+  esac
+  jq '[.projects[] | {id, name, states}]' "$CONFIG_FILE"
+}
+
+resolve_project() {
+  local name="$1" matches count
+  ensure_projects
+  matches="$(jq --arg name "$name" '[.projects[] | select(.name == $name)]' "$CONFIG_FILE")"
+  count="$(jq 'length' <<< "$matches")"
+  [ "$count" -gt 0 ] || die "找不到项目：${name}。请运行 pingcode-cli projects 查看缓存"
+  [ "$count" -eq 1 ] || die "存在多个同名项目：${name}"
+  jq -c '.[0]' <<< "$matches"
+}
+
+resolve_state_id() {
+  local project="$1" name="$2" ids count
+  ids="$(jq --arg name "$name" '[.states[] | select(.name == $name) | .id] | unique' <<< "$project")"
+  count="$(jq 'length' <<< "$ids")"
+  [ "$count" -gt 0 ] || return 1
+  [ "$count" -eq 1 ] || die "项目内存在多个同名状态：${name}"
+  jq -r '.[0]' <<< "$ids"
+}
+
+fetch_work_items() {
+  local project_id="$1" state_id="$2" assignee_id="$3"
+  local page=0 all='[]' previous_count=-1 response page_count total count
+  while :; do
+    response="$(api_request GET '/v1/project/work_items' --get \
+      --data-urlencode "project_id=${project_id}" \
+      --data-urlencode "assignee_id=${assignee_id}" \
+      --data-urlencode "state_id=${state_id}" \
+      --data-urlencode 'type_id=bug' \
+      --data-urlencode "page_index=${page}" \
+      --data-urlencode 'page_size=100')"
+    jq -e '.values | type == "array"' <<< "$response" >/dev/null 2>&1 ||
+      die "工作项列表响应缺少 values 数组"
+    all="$(jq -cn --argjson old "$all" --argjson new "$(jq '.values' <<< "$response")" \
+      '$old + $new | unique_by(.id)')"
+    page_count="$(jq '.values | length' <<< "$response")"
+    total="$(jq -er '
+      (.total // (.values | length)) as $total |
+      select(($total | type) == "number" and $total >= 0 and $total == ($total | floor)) |
+      $total
+    ' <<< "$response")" || die "工作项列表响应的 total 无效"
+    count="$(jq 'length' <<< "$all")"
+    (( count >= total )) && break
+    (( page_count > 0 && count > previous_count )) || die "工作项列表分页没有前进，已停止请求"
+    previous_count="$count"
+    page=$((page + 1))
+  done
+  printf '%s\n' "$all"
+}
+
+shape_bugs() {
+  local cutoff="$1"
+  jq --arg cutoff "$cutoff" '
+    ($cutoff | if . == "null" then null else tonumber end) as $created_after |
+    [
+      .[] |
+      select($created_after == null or (.created_at // 0) > $created_after) |
+      {
+        id: (.id // ""),
+        identifier: (.identifier // ""),
+        title: (.title // ""),
+        html_url: (.html_url // ""),
+        state: (.state // null),
+        description: (.description // "")
+      }
+    ] | sort_by(.identifier)
+  '
+}
+
+shape_bug() {
+  jq '{
+    id: (.id // ""),
+    identifier: (.identifier // ""),
+    title: (.title // ""),
+    html_url: (.html_url // ""),
+    state: (.state // null),
+    description: (.description // "")
+  }'
+}
+
 cmd_bugs() {
-  local debug=0
-  local json=0
-  local page_size=50
-  local has_page_size=0
-  while [ $# -gt 0 ]; do
+  local project_name="" cutoff="" state_name project project_id assignee_id state_id items='[]' batch
+  local -a state_names=() state_ids=()
+  while [ "$#" -gt 0 ]; do
     case "$1" in
-      --debug) debug=1; shift ;;
-      --json) json=1; shift ;;
-      -*)
-        die "未知 bugs 选项：$1。使用 pingcode-cli bugs -h 查看帮助。"
+      --project)
+        need_arg "$1" "${2:-}"
+        project_name="$2"
+        shift 2
         ;;
-      *)
-        if [ "$has_page_size" -eq 1 ]; then
-          die "只能指定一个数量参数。使用 pingcode-cli bugs -h 查看帮助。"
-        fi
-        page_size="$1"
-        has_page_size=1
+      --project=*) project_name="${1#*=}"; shift ;;
+      --state)
+        need_arg "$1" "${2:-}"
+        state_names+=("$2")
+        shift 2
+        ;;
+      --state=*) state_names+=("${1#*=}"); shift ;;
+      --created-after)
+        need_arg "$1" "${2:-}"
+        cutoff="$2"
+        shift 2
+        ;;
+      --created-after=*)
+        cutoff="${1#*=}"
+        [ -n "$cutoff" ] || die "--created-after 需要参数"
         shift
         ;;
+      *) die "未知 bugs 选项：$1" ;;
     esac
   done
+  [ -n "$project_name" ] || die "bugs 需要 --project <项目名称>"
+  [ -z "$cutoff" ] || validate_timestamp "$cutoff"
 
-  ensure_config
-
-  local project_id view_id addon_setting_id state_ids created_after
-  project_id="$(config_get project_id)"
-  view_id="$(config_get view_id)"
-  addon_setting_id="$(config_get addon_setting_id)"
-  state_ids="$(config_get state_ids)"
-  created_after="$(config_get created_after)"
-  created_after="${created_after:-$DEFAULT_CREATED_AFTER}"
-  [[ "$created_after" =~ ^[0-9]+$ ]] || die "配置字段 created_after 必须是 Unix 时间戳秒数：${created_after}"
-
-  # 构建 state_id 条件的 JSON 数组
-  local state_json="[]"
-  if [ -n "$state_ids" ]; then
-    state_json="$(echo "$state_ids" | tr ',' '\n' | sed 's/.*/"&"/' | paste -sd',' - | sed 's/^/[/;s/$/]/')"
+  project="$(resolve_project "$project_name")"
+  project_id="$(jq -r '.id' <<< "$project")"
+  assignee_id="$(jq -r '.my_assignee_id' "$CONFIG_FILE")"
+  if [ "${#state_names[@]}" -eq 0 ]; then
+    readarray -t state_ids < <(jq -r '.states[].id' <<< "$project")
+  else
+    for state_name in "${state_names[@]}"; do
+      state_id="$(resolve_state_id "$project" "$state_name")" ||
+        die "项目 ${project_name} 没有状态：${state_name}"
+      state_ids+=("$state_id")
+    done
   fi
+  [ "${#state_ids[@]}" -gt 0 ] || die "项目 ${project_name} 没有缓存任何 bug 状态，请运行 pingcode-cli projects refresh"
 
-  local payload
-  payload=$(cat <<ENDJSON
-{"addon_setting_id":"${addon_setting_id}","criteria":{"search":{"keywords":"","scopes":["identifier","title"]},"condition_logic":1,"sort_by":"identifier","sort_direction":1,"conditions":[{"operation":6,"property_key":"assignee","value":[{"id":"00000000000000000000000000000000","type":1}],"logic":1},{"operation":6,"property_key":"state_id","value":${state_json},"logic":1},{"operation":4,"property_key":"created_at","value":${created_after},"logic":1}],"mode":1,"pql":"","pql_snapshot":{},"group_by":"","show_type":2,"sort_type":1},"columns":["identifier","title","state_id","priority","assignee","parent_id","severity","reappear_probability","created_at"],"is_brief":1,"pi":0,"ps":${page_size}}
-ENDJSON
-)
+  readarray -t state_ids < <(printf '%s\n' "${state_ids[@]}" | awk '!seen[$0]++')
+  for state_id in "${state_ids[@]}"; do
+    batch="$(fetch_work_items "$project_id" "$state_id" "$assignee_id")"
+    items="$(jq -cn --argjson old "$items" --argjson new "$batch" '$old + $new | unique_by(.id)')"
+  done
 
-  local endpoint="/api/agile/projects/${project_id}/defect/views/${view_id}/content"
-
-  if [ "$json" -eq 0 ]; then
-    echo -e "${DIM}正在获取缺陷列表...${RESET}"
+  if [ -z "$cutoff" ]; then
+    cutoff="$(jq -c '.created_after' "$CONFIG_FILE")"
   fi
-
-  local response
-  response="$(api_post "$endpoint" "$payload")" || {
-    echo -e "${RED}请求失败。可能是会话过期，请重新复制 cURL 更新配置：${RESET}"
-    echo -e "  pingcode-cli config init"
-    exit 1
-  }
-
-  if [ "$debug" -eq 1 ]; then
-    {
-      echo -e "${BOLD}原始响应：${RESET}"
-      echo "$response" | python3 -m json.tool 2>/dev/null || echo "$response"
-      echo ""
-    } >&2
-  fi
-
-  # 缓存响应（供 set-state 等命令使用）
-  echo "$response" > "$CACHE_FILE"
-
-  local base_url
-  base_url="$(config_get base_url)"
-
-  # 解析并展示
-  echo "$response" | OUTPUT_JSON="$json" BASE_URL="$base_url" STATE_NAMES="$(declare -p STATE_NAME_MAP)" python3 -c "
-import json, sys, os, re
-
-data = json.load(sys.stdin)
-# 响应结构：{code, data: {value: [...]}}
-inner = data.get('data', data)
-items = inner.get('value', [])
-total = inner.get('total_count', len(items))
-
-# 解析 state_id → 名称映射
-state_names = {}
-env = os.environ.get('STATE_NAMES', '')
-for m in re.finditer(r'\[([^\]]+)\]=(\S+)', env):
-    state_names[m.group(1)] = m.group(2).strip('\"')
-
-base_url = os.environ.get('BASE_URL', '').rstrip('/')
-output_json = os.environ.get('OUTPUT_JSON') == '1'
-
-if output_json:
-    result = {
-        'total': total,
-        'items': []
-    }
-    for item in items:
-        short_id = item.get('short_id', item.get('identifier', ''))
-        state_id = item.get('state_id', '')
-        result['items'].append({
-            'id': item.get('_id', ''),
-            'short_id': short_id,
-            'identifier': item.get('identifier', ''),
-            'whole_identifier': item.get('whole_identifier', ''),
-            'title': item.get('title', ''),
-            'state_id': state_id,
-            'state_name': state_names.get(state_id, state_id[:8]),
-            'priority': item.get('priority'),
-            'assignee': item.get('assignee'),
-            'parent_id': item.get('parent_id'),
-            'severity': item.get('severity'),
-            'reappear_probability': item.get('reappear_probability'),
-            'created_at': item.get('created_at'),
-            'url': f'{base_url}/pjm/workitems/{short_id}' if base_url and short_id else ''
-        })
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-    sys.exit(0)
-
-if not items:
-    print('没有找到缺陷。')
-    sys.exit(0)
-
-print(f'\033[1m共 {total} 个未解决缺陷：\033[0m')
-print()
-
-for item in items:
-    short_id = item.get('short_id', item.get('identifier', ''))
-    title = item.get('title', '')
-    whole_id = item.get('whole_identifier', '')
-    state_id = item.get('state_id', '')
-    state_name = state_names.get(state_id, state_id[:8])
-    url = base_url + '/pjm/workitems/' + str(short_id)
-    print(f'  \033[36m{whole_id:<18}\033[0m \033[33m{state_name:<8}\033[0m {title}')
-    print(f'  \033[2m{url}\033[0m')
-    print()
-"
+  [ "$cutoff" = "null" ] || cutoff="${cutoff:-null}"
+  shape_bugs "$cutoff" <<< "$items"
 }
 
-# ─── set-state 命令 ────────────────────────────────────────────────
-# 从缓存中通过 short_id 或 whole_identifier 查找 _id
-resolve_work_item_id() {
-  local query="$1"
-  [ -f "$CACHE_FILE" ] || return 1
+get_bug() {
+  [[ "$1" =~ ^[A-Za-z0-9_-]+$ ]] || die "无效的 bug id：$1"
+  api_request GET "/v1/project/work_items/$1"
+}
 
-  python3 -c "
-import json, sys
-
-query = '$query'
-with open('$CACHE_FILE') as f:
-    data = json.load(f)
-
-inner = data.get('data', data)
-items = inner.get('value', [])
-
-for item in items:
-    sid = item.get('short_id', '')
-    wid = item.get('whole_identifier', '')
-    if query == sid or query == wid or query == str(item.get('identifier', '')):
-        print(item['_id'])
-        sys.exit(0)
-
-sys.exit(1)
-" 2>/dev/null
+cmd_bug() {
+  [ "$#" -eq 1 ] || die "用法：pingcode-cli bug <bug_id>"
+  get_bug "$1" | shape_bug
 }
 
 cmd_set_state() {
-  [ $# -ge 2 ] || {
-    echo -e "${BOLD}用法：${RESET}pingcode-cli set-state <缺陷编号> <状态>"
-    echo ""
-    echo -e "${BOLD}缺陷编号：${RESET}short_id（如 CFzSq6-n）或 whole_identifier（如 720YUN-10515）"
-    echo ""
-    echo -e "${BOLD}可用状态：${RESET}"
-    echo -e "  待处理  处理中  已修复  重新打开  挂起"
-    return 1
-  }
-
-  local query="$1"
-  local target_state="$2"
-
-  ensure_config
-
-  # 校验状态名
-  local state_id="${STATE_MAP[$target_state]:-}"
-  if [ -z "$state_id" ]; then
-    echo -e "${RED}未知状态：${target_state}${RESET}"
-    echo -e "可用状态：待处理  处理中  已修复  重新打开  挂起"
-    return 1
+  [ "$#" -eq 2 ] || die "用法：pingcode-cli set-state <bug_id> <状态名称>"
+  local bug_id="$1" state_name="$2" bug project_id project state_id response
+  bug="$(get_bug "$bug_id")"
+  project_id="$(jq -r '.project.id // empty' <<< "$bug")"
+  [ -n "$project_id" ] || die "工作项响应缺少 project.id"
+  ensure_projects
+  project="$(jq -c --arg id "$project_id" '.projects[] | select(.id == $id)' "$CONFIG_FILE" | head -1)"
+  if [ -z "$project" ]; then
+    cmd_projects_refresh >/dev/null
+    project="$(jq -c --arg id "$project_id" '.projects[] | select(.id == $id)' "$CONFIG_FILE" | head -1)"
+  fi
+  [ -n "$project" ] || die "项目缓存中找不到工作项所属项目：${project_id}"
+  if ! state_id="$(resolve_state_id "$project" "$state_name")"; then
+    cmd_projects_refresh >/dev/null
+    project="$(jq -c --arg id "$project_id" '.projects[] | select(.id == $id)' "$CONFIG_FILE" | head -1)"
+    state_id="$(resolve_state_id "$project" "$state_name")" ||
+      die "项目中没有状态：${state_name}"
   fi
 
-  # 查找 _id
-  local work_item_id
-  work_item_id="$(resolve_work_item_id "$query")" || {
-    echo -e "${DIM}缓存中未找到 ${query}，正在刷新缺陷列表...${RESET}"
-    # 静默刷新列表
-    cmd_bugs > /dev/null 2>&1
-    work_item_id="$(resolve_work_item_id "$query")" || die "找不到缺陷：${query}\n请确认编号是否正确（可通过 pingcode-cli bugs 查看）"
-  }
-
-  echo -e "${DIM}正在将 ${CYAN}${query}${DIM} 设为 ${YELLOW}${target_state}${DIM}...${RESET}"
-
-  local payload="{\"state_id\":\"${state_id}\",\"work_item_ids\":[\"${work_item_id}\"],\"bypass\":0}"
-
-  local response
-  response="$(api_post "/api/agile/work-items/state" "$payload")" || {
-    echo -e "${RED}操作失败。可能是会话过期，请重新复制 cURL 更新配置：${RESET}"
-    echo -e "  pingcode-cli config init"
-    exit 1
-  }
-
-  echo -e "${GREEN}已将 ${CYAN}${query}${GREEN} 设为 ${YELLOW}${target_state}${GREEN}${RESET}"
+  response="$(api_request PATCH "/v1/project/work_items/${bug_id}" \
+    -H 'Content-Type: application/json' \
+    --data "$(jq -cn --arg state_id "$state_id" '{state_id: $state_id}')")"
+  shape_bug <<< "$response"
 }
 
-# ─── config 命令 ───────────────────────────────────────────────────
-cmd_config() {
-  local subcmd="${1:-show}"
-  shift 2>/dev/null || true
-
-  case "$subcmd" in
-    show)
-      if [ ! -f "$CONFIG_FILE" ]; then
-        echo -e "${DIM}尚未初始化配置。运行 pingcode-cli config init${RESET}"
-        return
-      fi
-      echo -e "${BOLD}当前配置（${CONFIG_FILE}）：${RESET}"
-      echo ""
-      while IFS= read -r line; do
-        # 跳过空行
-        [ -z "$line" ] && continue
-        # 注释行
-        if [[ "$line" == \#* ]]; then
-          echo -e "  ${DIM}${line}${RESET}"
-        elif [[ "$line" == session_cookie=* ]]; then
-          # 隐藏敏感值
-          echo -e "  ${CYAN}session_cookie${RESET}=****（已隐藏）"
-        else
-          echo -e "  ${CYAN}${line%%=*}${RESET}=${line#*=}"
-        fi
-      done < "$CONFIG_FILE"
-      echo ""
-      ;;
-    init)
-      init_config
-      ;;
-    edit)
-      "${EDITOR:-vi}" "$CONFIG_FILE"
-      ;;
-    path)
-      echo "$CONFIG_FILE"
-      ;;
-    check)
-      validate_config_file
-      echo -e "${GREEN}配置检查通过${RESET}"
-      echo "config_file=${CONFIG_FILE}"
-      echo "base_url=$(config_get base_url)"
-      echo "session_cookie=****（已隐藏）"
-      echo "project_id=$(config_get project_id)"
-      echo "view_id=$(config_get view_id)"
-      echo "state_ids=$(config_get state_ids)"
-      local created_after
-      created_after="$(config_get created_after)"
-      echo "created_after=${created_after:-$DEFAULT_CREATED_AFTER}"
-      ;;
-    *)
-      die "未知子命令：$subcmd。可用：show, init, edit, path, check"
-      ;;
-  esac
-}
-
-# ─── 帮助 ────────────────────────────────────────────────────────
 usage() {
-  echo -e "${BOLD}pingcode-cli${RESET} - PingCode 命令行工具
+  cat <<'EOF'
+pingcode-cli - 使用 PingCode 官方 API 管理 bug
 
-${BOLD}用法：${RESET}
-  pingcode-cli <命令> [参数]
+用法：
+  pingcode-cli init
+  pingcode-cli auth
+  pingcode-cli projects [refresh]
+  pingcode-cli bugs --project <项目名称> [--state <状态名称>]... [--created-after <Unix 秒数>]
+  pingcode-cli bug <bug_id>
+  pingcode-cli set-state <bug_id> <状态名称>
 
-${BOLD}命令：${RESET}
-  bugs                          列出我的未解决缺陷
-  set-state <编号> <状态>       修改缺陷状态
-  config                        管理配置（show|init|edit|path|check）
+命令：
+  init        初始化 ~/.config/pingcode-cli/config.json
+  auth        获取、刷新或重新获取用户令牌
+  projects    查看项目缓存；refresh 重新获取项目及状态
+  bugs        获取分配给我的 bug，可多次传入 --state
+  bug         获取一个 bug
+  set-state   修改一个 bug 的状态
+EOF
+}
 
-${BOLD}可用状态：${RESET}
-  待处理  处理中  已修复  重新打开  挂起
+usage_init() {
+  cat <<'EOF'
+pingcode-cli init - 初始化配置
 
-${BOLD}选项：${RESET}
-  -h, --help      显示此帮助信息
+用法：
+  pingcode-cli init
 
-${BOLD}示例：${RESET}
-  pingcode-cli bugs                              # 列出未解决缺陷
-  pingcode-cli bugs --json                       # 以 JSON 格式输出缺陷列表
-  pingcode-cli set-state 720YUN-10515 已修复      # 标记为已修复
-  pingcode-cli set-state CFzSq6-n 处理中          # 标记为处理中
-  pingcode-cli config init                        # 重新初始化配置"
+交互内容：
+  client_id、client_secret、my_assignee_id
+  是否设置全局 created_at 起点（Unix 秒数）
+
+配置文件：
+  ~/.config/pingcode-cli/config.json
+EOF
+}
+
+usage_auth() {
+  cat <<'EOF'
+pingcode-cli auth - 获取或刷新用户令牌
+
+用法：
+  pingcode-cli auth
+
+access_token 有效时直接返回；过期时尝试 refresh_token。
+refresh_token 不可用时输出授权地址，并等待输入 code。
+EOF
+}
+
+usage_projects() {
+  cat <<'EOF'
+pingcode-cli projects - 管理项目缓存
+
+用法：
+  pingcode-cli projects
+  pingcode-cli projects refresh
+
+子命令：
+  refresh  重新获取全部项目及每个项目的 bug 状态
+
+不传子命令时输出缓存；缓存不存在或不完整时自动获取。
+EOF
 }
 
 usage_bugs() {
-  echo -e "${BOLD}pingcode-cli bugs${RESET} - 列出我的未解决缺陷
+  cat <<'EOF'
+pingcode-cli bugs - 获取分配给我的 bug
 
-${BOLD}用法：${RESET}
-  pingcode-cli bugs [--debug] [--json] [数量]
+用法：
+  pingcode-cli bugs --project <项目名称> [选项]
 
-${BOLD}参数：${RESET}
-  数量            每页返回数量，默认 50
+选项：
+  --state <状态名称>         可重复；省略时查询项目内全部缓存状态
+  --created-after <Unix 秒数>  覆盖配置中的全局时间戳
+  -h, --help                 显示帮助
+EOF
+}
 
-${BOLD}选项：${RESET}
-  --debug         打印原始 API 响应
-  --json          以 JSON 格式输出缺陷列表
-  -h, --help      显示此帮助信息
+usage_bug() {
+  cat <<'EOF'
+pingcode-cli bug - 获取一个 bug
 
-${BOLD}示例：${RESET}
-  pingcode-cli bugs
-  pingcode-cli bugs 100
-  pingcode-cli bugs --json
-  pingcode-cli bugs --debug"
+用法：
+  pingcode-cli bug <bug_id>
+
+参数：
+  bug_id  PingCode API 返回的工作项 id
+EOF
 }
 
 usage_set_state() {
-  echo -e "${BOLD}pingcode-cli set-state${RESET} - 修改缺陷状态
+  cat <<'EOF'
+pingcode-cli set-state - 修改 bug 状态
 
-${BOLD}用法：${RESET}
-  pingcode-cli set-state <缺陷编号> <状态>
+用法：
+  pingcode-cli set-state <bug_id> <状态名称>
 
-${BOLD}缺陷编号：${RESET}
-  short_id（如 CFzSq6-n）或 whole_identifier（如 720YUN-10515）
-
-${BOLD}可用状态：${RESET}
-  待处理  处理中  已修复  重新打开  挂起
-
-${BOLD}选项：${RESET}
-  -h, --help      显示此帮助信息
-
-${BOLD}示例：${RESET}
-  pingcode-cli set-state 720YUN-10515 已修复
-  pingcode-cli set-state CFzSq6-n 处理中"
-}
-
-usage_config() {
-  echo -e "${BOLD}pingcode-cli config${RESET} - 管理配置
-
-${BOLD}用法：${RESET}
-  pingcode-cli config [子命令]
-
-${BOLD}子命令：${RESET}
-  show            查看当前配置（默认）
-  init            初始化或重新初始化配置
-  edit            用 \$EDITOR 编辑配置文件
-  path            输出配置文件路径
-  check           检查配置是否可用
-
-${BOLD}选项：${RESET}
-  -h, --help      显示此帮助信息
-
-${BOLD}示例：${RESET}
-  pingcode-cli config show
-  pingcode-cli config init
-  pingcode-cli config edit
-  pingcode-cli config path
-  pingcode-cli config check"
+状态名称从工作项所属项目的状态缓存中解析；缓存过旧时自动刷新一次。
+EOF
 }
 
 is_help() {
   local arg
   for arg in "$@"; do
-    case "$arg" in
-      -h|--help) return 0 ;;
-    esac
+    case "$arg" in -h|--help) return 0 ;; esac
   done
   return 1
 }
 
-# ─── 主入口 ──────────────────────────────────────────────────────
 case "${1:-}" in
+  -h|--help|"") usage ;;
+  init)
+    shift
+    is_help "$@" && { usage_init; exit 0; }
+    require_commands
+    cmd_init "$@"
+    ;;
+  auth)
+    shift
+    is_help "$@" && { usage_auth; exit 0; }
+    require_commands
+    cmd_auth "$@"
+    ;;
+  projects)
+    shift
+    is_help "$@" && { usage_projects; exit 0; }
+    require_commands
+    cmd_projects "$@"
+    ;;
   bugs)
     shift
-    if is_help "$@"; then usage_bugs; exit 0; fi
+    is_help "$@" && { usage_bugs; exit 0; }
+    require_commands
     cmd_bugs "$@"
+    ;;
+  bug)
+    shift
+    is_help "$@" && { usage_bug; exit 0; }
+    require_commands
+    cmd_bug "$@"
     ;;
   set-state)
     shift
-    if is_help "$@"; then usage_set_state; exit 0; fi
+    is_help "$@" && { usage_set_state; exit 0; }
+    require_commands
     cmd_set_state "$@"
     ;;
-  config)
-    shift
-    if is_help "$@"; then usage_config; exit 0; fi
-    cmd_config "$@"
-    ;;
-  -h|--help)
-    usage
-    ;;
-  "")
-    usage
-    ;;
-  *)
-    die "未知命令：$1。使用 pingcode-cli -h 查看帮助。"
-    ;;
+  *) die "未知命令：$1。使用 pingcode-cli --help 查看帮助" ;;
 esac
