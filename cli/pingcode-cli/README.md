@@ -56,7 +56,8 @@ pingcode-cli set-state 5edca112b06305c524cad2fa '已修复'
 ```
 
 命令输出 JSON，只保留 `id`、`identifier`、`title`、`html_url`、`state` 和
-`description`。列表的时间过滤使用 `created_at > 时间戳`。
+`description`。列表和单项查询会为 `description` 中的图片 URL 附加临时访问
+token，方便直接访问或下载；列表的时间过滤使用 `created_at > 时间戳`。
 
 ## API 文档
 

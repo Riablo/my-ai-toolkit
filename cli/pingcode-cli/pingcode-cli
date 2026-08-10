@@ -369,6 +369,7 @@ fetch_work_items() {
       --data-urlencode "assignee_id=${assignee_id}" \
       --data-urlencode "state_id=${state_id}" \
       --data-urlencode 'type_id=bug' \
+      --data-urlencode 'include_public_image_token=description' \
       --data-urlencode "page_index=${page}" \
       --data-urlencode 'page_size=100')"
     jq -e '.values | type == "array"' <<< "$response" >/dev/null 2>&1 ||
@@ -390,9 +391,30 @@ fetch_work_items() {
   printf '%s\n' "$all"
 }
 
+add_image_access_tokens() {
+  jq '
+    def add_image_access_token:
+      (.public_image_token // "") as $token |
+      .description = (
+        (.description // "") |
+        if ($token | type) == "string" and ($token | length) > 0 then
+          gsub(
+            "(?i)(?<prefix><img[^>]*[[:space:]]src[[:space:]]*=[[:space:]]*[\"\u0027])(?<src>[^\"\u0027>]+)";
+            if (.src | test("[?&]access_token=")) then
+              "\(.prefix)\(.src)"
+            else
+              "\(.prefix)\(.src)\(if (.src | contains("?")) then "&" else "?" end)access_token=\($token)"
+            end
+          )
+        else . end
+      );
+    if type == "array" then map(add_image_access_token) else add_image_access_token end
+  '
+}
+
 shape_bugs() {
   local cutoff="$1"
-  jq --arg cutoff "$cutoff" '
+  add_image_access_tokens | jq --arg cutoff "$cutoff" '
     ($cutoff | if . == "null" then null else tonumber end) as $created_after |
     [
       .[] |
@@ -410,7 +432,7 @@ shape_bugs() {
 }
 
 shape_bug() {
-  jq '{
+  add_image_access_tokens | jq '{
     id: (.id // ""),
     identifier: (.identifier // ""),
     title: (.title // ""),
@@ -482,7 +504,8 @@ cmd_bugs() {
 
 get_bug() {
   [[ "$1" =~ ^[A-Za-z0-9_-]+$ ]] || die "无效的 bug id：$1"
-  api_request GET "/v1/project/work_items/$1"
+  api_request GET "/v1/project/work_items/$1" --get \
+    --data-urlencode 'include_public_image_token=description'
 }
 
 cmd_bug() {

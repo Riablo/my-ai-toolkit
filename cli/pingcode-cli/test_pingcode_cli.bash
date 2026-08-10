@@ -24,14 +24,16 @@ curl() {
       body='{"id":"bug-1","identifier":"P-1","title":"修复后","html_url":"https://example.test/P-1","state":{"id":"s2","name":"已修复"},"description":"done","project":{"id":"p1"},"extra":true}'
       ;;
     *'/v1/project/work_items/bug-1'*)
-      body='{"id":"bug-1","identifier":"P-1","title":"第一个","html_url":"https://example.test/P-1","state":{"id":"s1","name":"新提交"},"description":"one","project":{"id":"p1"},"extra":true}'
+      [[ "$args" == *'include_public_image_token=description'* ]]
+      body='{"id":"bug-1","identifier":"P-1","title":"第一个","html_url":"https://example.test/P-1","state":{"id":"s1","name":"新提交"},"description":"<p>one</p><img src=\"https://files.test/one.png\">","public_image_token":"single-token","project":{"id":"p1"},"extra":true}'
       ;;
     *'/v1/project/work_items'*'state_id=s1'*)
-      [[ "$args" == *'project_id=p1'* && "$args" == *'assignee_id=me'* && "$args" == *'type_id=bug'* ]]
-      body='{"total":1,"values":[{"id":"bug-1","identifier":"P-1","title":"第一个","html_url":"https://example.test/P-1","state":{"id":"s1","name":"新提交"},"description":"one","created_at":101,"extra":true}]}'
+      [[ "$args" == *'project_id=p1'* && "$args" == *'assignee_id=me'* && "$args" == *'type_id=bug'* && "$args" == *'include_public_image_token=description'* ]]
+      body='{"total":1,"values":[{"id":"bug-1","identifier":"P-1","title":"第一个","html_url":"https://example.test/P-1","state":{"id":"s1","name":"新提交"},"description":"<p>one</p><img src=\"https://files.test/one.png\">","public_image_token":"list-token-1","created_at":101,"extra":true}]}'
       ;;
     *'/v1/project/work_items'*'state_id=s2'*)
-      body='{"total":2,"values":[{"id":"bug-2","identifier":"P-2","title":"第二个","html_url":"https://example.test/P-2","state":{"id":"s2","name":"已修复"},"description":"two","created_at":102},{"id":"bug-old","identifier":"P-0","title":"旧 bug","created_at":100}]}'
+      [[ "$args" == *'include_public_image_token=description'* ]]
+      body='{"total":2,"values":[{"id":"bug-2","identifier":"P-2","title":"第二个","html_url":"https://example.test/P-2","state":{"id":"s2","name":"已修复"},"description":"<img src=\"https://files.test/two.png?size=large\">","public_image_token":"list-token-2","created_at":102},{"id":"bug-old","identifier":"P-0","title":"旧 bug","created_at":100}]}'
       ;;
     *) return 22 ;;
   esac
@@ -79,11 +81,17 @@ bugs="$("$CLI" bugs --project 项目一 --state 新提交 --state 已修复)"
 jq -e '
   length == 2 and
   (map(.id) == ["bug-1", "bug-2"]) and
+  .[0].description == "<p>one</p><img src=\"https://files.test/one.png?access_token=list-token-1\">" and
+  .[1].description == "<img src=\"https://files.test/two.png?size=large&access_token=list-token-2\">" and
   all(.[]; (keys | sort) == ["description", "html_url", "id", "identifier", "state", "title"])
 ' <<< "$bugs" >/dev/null
 
 bug="$("$CLI" bug bug-1)"
-jq -e '.id == "bug-1" and (has("extra") | not)' <<< "$bug" >/dev/null
+jq -e '
+  .id == "bug-1" and
+  .description == "<p>one</p><img src=\"https://files.test/one.png?access_token=single-token\">" and
+  (has("extra") | not)
+' <<< "$bug" >/dev/null
 
 updated="$("$CLI" set-state bug-1 已修复)"
 jq -e '.id == "bug-1" and .state.name == "已修复" and (has("extra") | not)' <<< "$updated" >/dev/null
