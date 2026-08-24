@@ -80,6 +80,12 @@ default_subdir=chenzheng
 
 ## 用法
 
+直接运行 `push` 时会提示输入源目录；输入过程中可按 `Tab` 补全路径：
+
+```bash
+testpage-cli push
+```
+
 如果配置了 `default_subdir`，默认会发布到这个子目录下，并使用源目录名作为最终目录名：
 
 ```bash
@@ -130,7 +136,7 @@ https://test.720yun.com/html_test/T2Vision-demo/
 - `default_subdir` 和 `--subdir` 使用同样的路径规则
 - `--root` 和 `--subdir` 互斥；优先级为 `--root` > `--subdir` > `default_subdir` > 根目录
 - `--name` 是最终目录名，不能包含 `/`
-- 目标目录已存在时，会先整体删除再复制，避免旧资源残留
+- 目标目录已存在时，会先复制到临时目录，再整体删除旧目录并用新目录替换，避免旧资源残留
 - 发布前会检查 `project_root` 是否是 Git 仓库，且工作区必须是干净的
 - 如果复制后目标内容没有变化，就不会 commit 或 push，只直接返回 URL
 - `push` 会排除源目录中的 `.git/`

@@ -39,7 +39,7 @@ _testpage-cli() {
         '--subdir[发布到指定子目录]:subdir:' \
         '--root[忽略默认子目录，直接发布到根目录]' \
         '--name[发布时使用的目标目录名]:name:' \
-        '1:source directory:_directories'
+        '2:source directory:_directories'
       ;;
   esac
 }

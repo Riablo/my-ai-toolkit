@@ -277,12 +277,13 @@ print_main_help() {
   testpage-cli config show
   testpage-cli config path
   testpage-cli config check
-  testpage-cli push <source-dir> [--subdir <相对路径> | --root] [--name <目录名>]
+  testpage-cli push [<source-dir>] [--subdir <相对路径> | --root] [--name <目录名>]
 
 说明：
   - 配置一个本地 Git 项目目录，例如 /Users/cz/Work/html_test/
   - 可配置 default_subdir，默认发布到某个子目录下
-  - 将包含 HTML 的目录复制到目标位置
+  - 将包含 HTML 的目录完整覆盖到目标位置
+  - 不提供 source-dir 时，会交互输入目录并支持 Tab 路径补全
   - 复制完成后自动执行 git fetch、pull、commit、push
   - 任一步 Git 失败即停止
 
@@ -326,15 +327,16 @@ EOF
 print_push_help() {
   cat <<EOF
 用法：
-  testpage-cli push <source-dir> [--subdir <相对路径> | --root] [--name <目录名>]
+  testpage-cli push [<source-dir>] [--subdir <相对路径> | --root] [--name <目录名>]
 
 说明：
   - source-dir 必须是目录，且里面至少包含一个 .html 或 .htm 文件
+  - 不提供 source-dir 时，会交互输入目录并支持 Tab 路径补全
   - 若未提供 --name，默认使用源目录名作为目标目录名
   - 若未提供 --subdir 或 --root，会优先使用配置中的 default_subdir
   - 路径优先级：--root > --subdir > default_subdir > 根目录
   - --root 和 --subdir 互斥
-  - 发布流程包含 git fetch、pull、复制目录、commit、push
+  - 发布流程包含 git fetch、pull、完整覆盖目录、commit、push
 
 示例：
   testpage-cli push ./dist
@@ -430,16 +432,18 @@ cmd_config() {
 }
 
 cmd_push() {
+  local source_arg
   if [ $# -eq 0 ]; then
-    die "请提供源目录。用法：testpage-cli push <source-dir> [--subdir <相对路径> | --root] [--name <目录名>]"
-  fi
-  if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    read -e -r -p "请输入源目录（可按 Tab 补全）：" source_arg || die "已取消输入"
+    source_arg="$(trim "$source_arg")"
+    [ -n "$source_arg" ] || die "源目录不能为空"
+  elif [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
     print_push_help
     return 0
+  else
+    source_arg="$1"
+    shift
   fi
-
-  local source_arg="$1"
-  shift
 
   local subdir=""
   local name=""
@@ -505,7 +509,7 @@ cmd_push() {
   info "执行 git pull --ff-only origin ${branch}..."
   git -C "$CONFIG_PROJECT_ROOT" pull --ff-only origin "$branch"
 
-  info "同步文件到 ${target_rel} ..."
+  info "完整覆盖 ${target_rel} ..."
   deploy_directory "$source_dir" "$target_dir"
 
   git -C "$CONFIG_PROJECT_ROOT" add --all -- "$target_rel"
