@@ -63,6 +63,7 @@ Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/s
 | [skill-retrospective](skills/skill-retrospective/) | 在创建、更新、重构或 review skill 时自动做反思检查，重点检查 description、README 化正文、gotcha、边界与渐进加载 |
 | [testpage-cli](skills/testpage-cli/) | 使用 `testpage-cli` 发布本地 HTML 目录到测试服务器对应的 Git 项目，并返回可访问 URL |
 | [web-app-dockerizer](skills/web-app-dockerizer/) | 把本地 Web App 从 Bun/npm/pnpm/yarn 或旧常驻进程迁移为 Docker Compose 长期运行 |
+| [wt-land](skills/wt-land/) | 使用 `wt-land` 将当前 worktree 的功能分支线性落到另一个本地 worktree 分支 |
 | [yun720](skills/yun720/) | 使用 `yun720` 上传全景素材、查询制作状态、创建 720 云漫游作品；支持先生成 2:1 全景图再创建作品 |
 
 ## cli/
@@ -80,6 +81,7 @@ Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/s
 | [readlater-cli](cli/readlater-cli/) | 极简 read-it-later 抓取工具（URL 标题 / 简单概要 / JSON 输出，X/Twitter 优先走 oEmbed） |
 | [jenkins-builder-cli](cli/jenkins-builder-cli/) | Jenkins 构建命令行工具（实时 jobs / 标签与别称 / 触发构建 / 改分支 / 日志 / 停止） |
 | [testpage-cli](cli/testpage-cli/) | 测试 HTML 页面快速发布工具（同步目录 / 覆盖目标 / Git 提交并推送 / 返回访问 URL） |
+| [wt-land](cli/wt-land/) | 将当前功能分支 rebase 后 fast-forward 到目标 worktree 分支，保持提交历史线性 |
 
 ### myskills 用法
 

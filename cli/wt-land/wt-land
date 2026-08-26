@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+usage() {
+  cat <<'EOF'
+wt-land - 将当前功能分支线性合并到目标 worktree 分支
+
+用法:
+  wt-land <目标分支>
+
+流程:
+  1. 将当前分支 rebase 到本地目标分支
+  2. 在目标分支所在 worktree 执行 fast-forward-only 合并
+
+前提:
+  - 当前分支和目标分支都必须是本地分支
+  - 目标分支必须已在另一个 worktree 中检出
+  - 当前和目标 worktree 都必须没有未提交改动
+
+示例:
+  wt-land foo
+
+发生 rebase 冲突时，解决冲突后继续执行 git rebase --continue，
+或执行 git rebase --abort 回到操作前状态。
+EOF
+}
+
+die() {
+  printf '错误：%s\n' "$1" >&2
+  exit "${2:-1}"
+}
+
+if [ "$#" -eq 1 ]; then
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+  esac
+fi
+
+[ "$#" -eq 1 ] || {
+  usage >&2
+  exit 2
+}
+
+target_branch="$1"
+target_ref="refs/heads/$target_branch"
+current_ref=""
+line=""
+worktree=""
+target_worktree=""
+dirty=""
+
+git rev-parse --git-dir >/dev/null 2>&1 || die "当前目录不在 Git 仓库中"
+git show-ref --verify --quiet "$target_ref" || die "本地目标分支不存在：$target_branch"
+
+current_ref="$(git symbolic-ref --quiet HEAD)" || die "当前 worktree 处于 detached HEAD 状态"
+[ "$current_ref" != "$target_ref" ] || die "当前已经位于目标分支：$target_branch"
+
+while IFS= read -r -d '' line; do
+  case "$line" in
+    'worktree '*)
+      worktree="${line#worktree }"
+      ;;
+    "branch $target_ref")
+      target_worktree="$worktree"
+      break
+      ;;
+  esac
+done < <(git worktree list --porcelain -z)
+
+[ -n "$target_worktree" ] || die "目标分支未在任何 worktree 中检出：$target_branch"
+
+dirty="$(git status --porcelain --untracked-files=normal)" || exit 1
+[ -z "$dirty" ] || die "当前 worktree 有未提交改动"
+
+dirty="$(git -C "$target_worktree" status --porcelain --untracked-files=normal)" || exit 1
+[ -z "$dirty" ] || die "目标 worktree 有未提交改动：$target_worktree"
+
+git rebase "$target_ref" || exit 1
+git -C "$target_worktree" merge --ff-only "$current_ref"
