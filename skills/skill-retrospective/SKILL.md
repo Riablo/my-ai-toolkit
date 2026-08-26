@@ -1,39 +1,38 @@
 ---
 name: skill-retrospective
-description: 当用户要创建、更新、重构、审查或复盘一个 skill，或提到“这个 skill 写得对不对”“是不是太像 README”“帮我优化 skill 的 description、gotcha、路由边界”时使用。
-disable-model-invocation: true
+description: 创建、更新、重构、审查或复盘 skill 时自动联用，检查其必要性、触发边界、指令密度、gotcha 与渐进加载；不用于普通代码或文档审查。
 ---
 
 # Skill Retrospective
 
-在 skill 的创建与修改过程中自动做一次反思和踩坑检查。这个 skill 不负责替代领域 skill；它负责检查“这个 skill 本身写得像不像一个好 skill”。
+作为 skill 工作流中的自动 reviewer，检查“这个 skill 本身写得像不像一个好 skill”。不要替代负责创建或修改内容的主 skill，也不要扩大用户原本要求的改动范围。
 
 ## 联用方式
 
-- 创建或更新普通 skill 时，与 `skill-creator` 联用
+- 创建或更新普通 skill 时，在主 skill 完成修改后做检查
 - 创建或更新 CLI skill 时，与 `cli-skill-creator` 联用
-- 用户明确要 review 现有 skill 时，可以单独使用本 skill
+- 用户明确要求 review 或复盘现有 skill 时，可以单独使用
 
-它更像一个默认介入的 reviewer，而不是脚手架。
+本 skill 允许自动调用，但这不代表目标 skill 也应允许自动调用。目标 skill 的调用策略应服从用户要求和目标仓库约定。
 
 ## 先问的事
 
-开始写或改 skill 之前，先判断两件事：
+开始写或改 skill 前，先判断两件事：
 
 1. 这件事真的需要一个 skill 吗
 2. 这次改动最主要是在修路由、修正文、补 gotcha，还是拆结构
 
 如果只是一条全局规则、一个模型本来就知道的流程，或变化太快以至于 skill 会立刻过时，优先不要写 skill。
 
-## 默认检查顺序
+## 工作方式
 
-1. 检查 `description` 是否在描述“何时触发”，而不是“这个 skill 做什么”
-2. 检查正文是否写了模型本来就知道的常识、完整命令手册或 README 式说明
-3. 检查高价值 gotcha、边界条件、禁止事项是否缺失
-4. 检查重内容是否应该拆到 `references/`、`scripts/` 或其他渐进加载位置
-5. 检查这个 skill 会不会和相邻 skill 抢路由，或把边界写得过宽
-6. 检查这次改动是否需要补正例、反例或至少一组路由样例
-7. 检查仓库内 skill 是否默认同时设置 `disable-model-invocation: true` 和 `policy.allow_implicit_invocation: false`；只有用户明确要求时才允许自动调用
+1. 先完成用户要求的创建、修改或审查任务；本 skill 只补充 reviewer 视角
+2. 检查 `description` 是否同时说清能力、触发场景和必要边界，且不会与相邻 skill 抢路由
+3. 删除模型本来就知道的常识、完整命令手册和 README 式说明
+4. 检查高价值 gotcha、授权边界和容易误判的失败场景是否缺失
+5. 将条件性重内容放到 `references/`，将重复且确定的操作放到 `scripts/`
+6. 检查调用策略是否符合用户要求和仓库约定；两端配置存在时应保持一致，并保留无关字段
+7. 只有当路由改动确实难以判断时，才补最小的正反例或行为验证
 
 ## 这个 skill 主要防什么坑
 
@@ -44,14 +43,15 @@ disable-model-invocation: true
 - 没有相邻边界意识，新增一个 skill 就顺手干扰别的 skill
 - 改了路由描述，却没有补相应的正反例
 - 只配置 Claude Code / Pi 或 Codex 一侧的调用策略，导致不同 Agent 行为不一致
+- 把本 skill 的自动调用策略错误地复制给目标 skill
 
-详细反模式见 [references/anti-patterns.md](/Users/cz/Projects/my-ai-toolkit/skills/skill-retrospective/references/anti-patterns.md)。
+详细反模式见 [references/anti-patterns.md](references/anti-patterns.md)。
 
 ## 何时读 reference
 
-- 要做完整反思清单：读 [references/reflection-checklist.md](/Users/cz/Projects/my-ai-toolkit/skills/skill-retrospective/references/reflection-checklist.md)
-- 要专门检查路由、description、gotcha：读 [references/routing-and-gotchas.md](/Users/cz/Projects/my-ai-toolkit/skills/skill-retrospective/references/routing-and-gotchas.md)
-- 要识别常见反模式：读 [references/anti-patterns.md](/Users/cz/Projects/my-ai-toolkit/skills/skill-retrospective/references/anti-patterns.md)
+- 要做完整反思清单：读 [references/reflection-checklist.md](references/reflection-checklist.md)
+- 要专门检查路由、description、gotcha：读 [references/routing-and-gotchas.md](references/routing-and-gotchas.md)
+- 要识别常见反模式：读 [references/anti-patterns.md](references/anti-patterns.md)
 
 ## 输出方式
 
@@ -65,10 +65,10 @@ disable-model-invocation: true
 - 先把明显反模式改掉
 - 再补最关键的 gotcha、边界和渐进加载提示
 - 最后再考虑补充说明文字
+- 将检查结果融入正常交付；除非用户要求复盘，不额外输出冗长报告
 
 ## 维护原则
 
 - 这个 skill 记录的是反复出现的坑，不是完整 skill 教程
 - 新失败案例优先追加到 gotcha 或反模式里，不要把主文件重新写成大而全指南
 - 如果某条反思已经变成这个仓库所有 skill 的稳定约定，应考虑沉淀到 `AGENTS.md` 或生成器 skill，而不是无限加在这里
-- 本仓库的稳定默认项是显式调用：`SKILL.md` 使用 `disable-model-invocation: true`，`agents/openai.yaml` 使用 `policy.allow_implicit_invocation: false`
