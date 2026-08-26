@@ -1,6 +1,7 @@
 ---
 name: qweather-cli
 description: 当用户要查当前天气、未来几天预报、未来几小时降雨或温度变化，按城市 / LocationID / 经纬度查天气，或排查 `qweather-cli` 配置时使用。
+disable-model-invocation: true
 ---
 
 # QWeather CLI

@@ -1,6 +1,7 @@
 ---
 name: image-prompt-tester
 description: 当用户想测试图片生成 prompt、试几张图、比较不同提示词方向，或给参考图让 agent 提取风格并生成可复用模板时使用。
+disable-model-invocation: true
 ---
 
 # Image Prompt Tester

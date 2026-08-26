@@ -1,6 +1,7 @@
 ---
 name: yun720
 description: 当用户要上传全景素材到 720 云、查询 pano 制作状态、等待任务完成、创建 720 漫游作品，或先生成 2:1 全景图再创建作品时使用。
+disable-model-invocation: true
 ---
 
 # yun720

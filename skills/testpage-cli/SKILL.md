@@ -1,6 +1,7 @@
 ---
 name: testpage-cli
 description: 当用户要把本地 HTML 目录发布到测试服务器、同步静态页面到 `html_test`、指定发布子目录或根目录，或排查 `testpage-cli` 配置与仓库状态时使用。
+disable-model-invocation: true
 ---
 
 # Testpage CLI

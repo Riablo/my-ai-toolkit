@@ -1,6 +1,7 @@
 ---
 name: skill-retrospective
 description: 当用户要创建、更新、重构、审查或复盘一个 skill，或提到“这个 skill 写得对不对”“是不是太像 README”“帮我优化 skill 的 description、gotcha、路由边界”时使用。
+disable-model-invocation: true
 ---
 
 # Skill Retrospective
@@ -32,6 +33,7 @@ description: 当用户要创建、更新、重构、审查或复盘一个 skill�
 4. 检查重内容是否应该拆到 `references/`、`scripts/` 或其他渐进加载位置
 5. 检查这个 skill 会不会和相邻 skill 抢路由，或把边界写得过宽
 6. 检查这次改动是否需要补正例、反例或至少一组路由样例
+7. 检查仓库内 skill 是否默认同时设置 `disable-model-invocation: true` 和 `policy.allow_implicit_invocation: false`；只有用户明确要求时才允许自动调用
 
 ## 这个 skill 主要防什么坑
 
@@ -41,6 +43,7 @@ description: 当用户要创建、更新、重构、审查或复盘一个 skill�
 - 该拆到 `references/` 的重内容全塞进 `SKILL.md`
 - 没有相邻边界意识，新增一个 skill 就顺手干扰别的 skill
 - 改了路由描述，却没有补相应的正反例
+- 只配置 Claude Code / Pi 或 Codex 一侧的调用策略，导致不同 Agent 行为不一致
 
 详细反模式见 [references/anti-patterns.md](/Users/cz/Projects/my-ai-toolkit/skills/skill-retrospective/references/anti-patterns.md)。
 
@@ -68,3 +71,4 @@ description: 当用户要创建、更新、重构、审查或复盘一个 skill�
 - 这个 skill 记录的是反复出现的坑，不是完整 skill 教程
 - 新失败案例优先追加到 gotcha 或反模式里，不要把主文件重新写成大而全指南
 - 如果某条反思已经变成这个仓库所有 skill 的稳定约定，应考虑沉淀到 `AGENTS.md` 或生成器 skill，而不是无限加在这里
+- 本仓库的稳定默认项是显式调用：`SKILL.md` 使用 `disable-model-invocation: true`，`agents/openai.yaml` 使用 `policy.allow_implicit_invocation: false`

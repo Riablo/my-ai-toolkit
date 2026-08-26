@@ -1,6 +1,7 @@
 ---
 name: cli-skill-creator
 description: 为本仓库 `cli/` 下的命令行工具创建或更新 skill 时使用。用户提到“给某个 CLI 写 skill”“让 AI 用自然语言调用某个命令行工具”“把仓库里的 CLI 包装成可安装 skill”时触发。
+disable-model-invocation: true
 ---
 
 # CLI Skill Creator
@@ -11,7 +12,8 @@ description: 为本仓库 `cli/` 下的命令行工具创建或更新 skill 时�
 
 - 产出默认放在 `skills/<skill-name>/`
 - 至少包含 `SKILL.md`
-- 只有确实需要时才增加 `references/`、`scripts/`、`assets/` 或 `agents/openai.yaml`
+- 每个新 skill 都要包含 `agents/openai.yaml`，并默认禁止模型自动调用
+- 只有确实需要时才增加 `references/`、`scripts/` 或 `assets/`
 - 新增 skill 后同步更新仓库根目录 `README.md`
 
 ## 先确认 CLI 事实
@@ -61,6 +63,9 @@ description: 为本仓库 `cli/` 下的命令行工具创建或更新 skill 时�
 
 - 默认把 `PROJECT_ROOT` 视为 `skills/` 的上一级目录
 - 对应 CLI 默认位于 `PROJECT_ROOT/cli/<tool-name>`
+- `SKILL.md` frontmatter 默认设置 `disable-model-invocation: true`，兼容 Claude Code 和 Pi
+- `agents/openai.yaml` 默认设置 `policy.allow_implicit_invocation: false`，兼容 Codex；若已有 `interface` 或 `dependencies`，只追加或更新 `policy`，不要覆盖其他字段
+- 只有用户明确要求允许自动调用某个 skill 时，才移除或反转这两项配置
 - 如果 CLI 涉及配置，自检入口要优先写清楚，但不要要求每次执行前都先跑一遍
 - 对 `init`、登录、写配置这类会修改本机状态的命令，只有在用户明确给出必要参数或明确同意时才执行
 - 输出默认先给自然语言结论，不要机械倾倒 JSON

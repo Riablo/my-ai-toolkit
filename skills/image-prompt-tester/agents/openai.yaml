@@ -2,3 +2,5 @@ interface:
   display_name: "Image Prompt Tester"
   short_description: "测试生图提示词或参考图风格并并行出图"
   default_prompt: "Use $image-prompt-tester to test this image prompt or reference image style in 3 parallel versions, ask for test directions if I have not specified them, and save images plus prompts to ~/Downloads."
+policy:
+  allow_implicit_invocation: false

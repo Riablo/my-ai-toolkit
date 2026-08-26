@@ -1,6 +1,7 @@
 ---
 name: my-notion
 description: 当用户要把条目添加或编辑到本 skill 已显式支持的个人 Notion 数据库时使用；当前支持 Music、Movie、TV Series Logs。不要用于任意 Notion 数据库写入、Obsidian/Mosaic 本地笔记写入，或删除 Notion 条目；新增数据库支持只在用户明确要求维护本 skill 时进行。
+disable-model-invocation: true
 ---
 
 # My Notion

@@ -1,6 +1,7 @@
 ---
 name: mosaic-notes
 description: 当用户要在 Obsidian Mosaic 知识库里记笔记、搜笔记、改属性、写 daily note、添加任务、记录专辑/电影/剧集，或说“记一下”“加个待办”“把昨天任务移过来”时使用。
+disable-model-invocation: true
 ---
 
 # Mosaic Notes

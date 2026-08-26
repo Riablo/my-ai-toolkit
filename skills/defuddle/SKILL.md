@@ -1,6 +1,7 @@
 ---
 name: defuddle
 description: 当用户提到 defuddle、要把网页或本地 HTML 转成 Markdown、抓取正文、读取文章内容或导出网页正文时使用。
+disable-model-invocation: true
 ---
 
 # Defuddle

@@ -1,6 +1,7 @@
 ---
 name: freecurrency-cli
 description: 当用户要查汇率、做金额换算、看最新 USD/EUR/CNY/TWD 汇率、检查 Open Exchange Rates 配置，或排查 `freecurrency-cli` 缓存与配置时使用。
+disable-model-invocation: true
 ---
 
 # Freecurrency CLI

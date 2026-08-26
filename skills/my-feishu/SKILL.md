@@ -1,6 +1,7 @@
 ---
 name: my-feishu
 description: 当用户要往白名单飞书群发消息、在群消息里 @ 用户、新建飞书云文档、读写指定飞书云文档，或排查 `lark-cli` 相关飞书消息/文档权限问题时使用。群消息仅支持预设白名单群；编辑已有云文档仅处理用户明确给出的 docx/wiki URL 或 token。
+disable-model-invocation: true
 ---
 
 # My Feishu

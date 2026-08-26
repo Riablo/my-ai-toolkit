@@ -1,6 +1,7 @@
 ---
 name: jenkins-builder-cli
 description: 当用户用自然语言要求触发 Jenkins 构建、发布测试服/正式服、切换 Jenkins job 分支后构建、查询/停止构建或用别称查找 Jenkins job 时使用。
+disable-model-invocation: true
 ---
 
 # Jenkins Builder CLI

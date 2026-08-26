@@ -1,6 +1,7 @@
 ---
 name: cloudsaver-cli
 description: 当用户想搜索 Telegram 频道里的网盘资源、找 115 或阿里云盘链接、把 115 分享链接转存到自己的网盘，或排查 `cloudsaver-cli` 的频道、Cookie、代理配置时使用。
+disable-model-invocation: true
 ---
 
 # CloudSaver CLI

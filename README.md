@@ -45,6 +45,8 @@ bash scripts/install.sh
 
 Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/skills)，使用 `myskills` 命令管理。
 
+仓库中的 skill 默认只允许用户显式调用，不由 Agent 自动选择：`SKILL.md` 使用 `disable-model-invocation: true`，兼容 Claude Code 和 Pi；`agents/openai.yaml` 使用 `policy.allow_implicit_invocation: false`，兼容 Codex。以后新增 skill 也遵循这一默认项，只有明确需要自动调用时才同时调整两处配置。
+
 | Skill | 说明 |
 | --- | --- |
 | [cli-skill-creator](skills/cli-skill-creator/) | 为 `cli/` 下的命令行工具生成 AI skill（先探测 help/README/配置，再写轻量 skill） |

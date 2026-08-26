@@ -1,6 +1,7 @@
 ---
 name: web-app-dockerizer
 description: 当用户给出一个项目目录，并要求把本地 Web App、Bun/npm/pnpm/yarn 服务、旧常驻进程或 macOS 自启动方式迁移为 Docker / Docker Compose 长期运行时使用。
+disable-model-invocation: true
 ---
 
 # Web App Dockerizer
