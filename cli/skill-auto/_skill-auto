@@ -1,0 +1,26 @@
+#compdef skill-auto
+
+_skill-auto() {
+  local -a commands
+  commands=(
+    'on:开启 Skill 自动调用与上下文注入'
+    'off:关闭 Skill 自动调用与上下文注入'
+  )
+
+  if (( CURRENT == 2 )); then
+    _describe -t commands 'command' commands
+    return
+  fi
+
+  case "$words[2]" in
+    on|off)
+      if (( CURRENT == 3 )); then
+        _directories 'skill 目录'
+      fi
+      ;;
+  esac
+
+  _arguments '(-h --help)'{-h,--help}'[显示帮助]'
+}
+
+_skill-auto "$@"
