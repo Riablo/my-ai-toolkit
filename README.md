@@ -52,6 +52,7 @@ Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/s
 | [cli-skill-creator](skills/cli-skill-creator/) | 为 `cli/` 下的命令行工具生成 AI skill（先探测 help/README/配置，再写轻量 skill） |
 | [cloudsaver-cli](skills/cloudsaver-cli/) | 使用 `cloudsaver-cli` 搜索网盘资源、检查配置并转存 115 分享链接 |
 | [defuddle](skills/defuddle/) | 使用 `npx defuddle` 获取 URL 或本地 HTML 的正文，并转换为 Markdown 文档 |
+| [eli5](skills/eli5/) | 用大图和少量文字，将指定主题解释得像讲给 5 岁孩子听 |
 | [freecurrency-cli](skills/freecurrency-cli/) | 使用 `freecurrency-cli` 查询汇率、做金额换算，并检查配置与缓存 |
 | [image-prompt-tester](skills/image-prompt-tester/) | 生图测试：按指定方向测试图片提示词，或从参考图提取风格生成占位符模板，并行出图后保存到 `~/Downloads` |
 | [jenkins-builder-cli](skills/jenkins-builder-cli/) | 用自然语言安全调用 Jenkins 构建工具（job 查找 / 分支确认 / 测试服正式服确认 / 子代理监听构建） |
