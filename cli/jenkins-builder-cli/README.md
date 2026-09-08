@@ -194,8 +194,10 @@ jenkins-builder-cli runs status "folder/test.frontend_build#123" --json
 ## 行为说明
 
 - `jobs list` 每次都会实时请求 Jenkins，不使用本地 jobs 缓存
+- `jobs list --query` 先按名称、本地标签和别称过滤，只读取匹配 job 的分支配置
 - `jobs list` 的 `BRANCH` 列显示 Jenkins 当前 job 配置里的真实 Branch Specifier；如果不是经典 Git job 或无法唯一解析，则显示 `-`
 - `build <ref>` 和 `set-branch <ref>` 先精确匹配 Jenkins job name，再匹配本地 aliases
+- 提供完整名称或别称时直接校验目标 job；只有无法定位目标时才枚举目录，以保留名称候选提示
 - alias 必须唯一；如果多个 job 配置了同一个 alias，命令会拒绝执行并列出候选
 - 不支持 `build 12` 这种数字参数；只有 `build` 交互列表里可以输入序号
 - `build` 始终调用 Jenkins 的普通 `build` 接口；如果要发布特定分支，请先用 `set-branch` 修改 Branch Specifier，再执行 `build`
@@ -204,6 +206,17 @@ jenkins-builder-cli runs status "folder/test.frontend_build#123" --json
 - `set-branch` 传入分支名时会自动补成 `*/xxx`；如果你已经自己传了 `*/` 前缀，就保持原样
 - `set-branch` 是持久修改，不会在构建后自动恢复
 - `set-branch` 只支持经典 Git job；遇到 Pipeline / Multibranch / 多个 Branch Specifier 时会拒绝执行
+- `logs --follow` 使用增量日志接口和服务端字节游标，后续轮询只获取新增日志，并在日志完成后退出；中文和 Jenkins 控制台注解不会导致游标错位
+- `logs --tail N --follow` 启动时连续读取已有日志的分页，只缓冲最后 N 行；追到空批次或日志完成后显示这 N 行，随后显示全部新增内容。首次仍需读取已有日志，之后不会重复下载；`--json` 仍输出完整日志和构建状态
+- Fish 只在 job 参数位置生成配置中的 job/alias 候选，其他子命令位置不读取 jobs 配置
+
+## 本地回归测试
+
+```bash
+uv run cli/jenkins-builder-cli/test_main.py
+```
+
+测试使用模拟 HTTP 响应和临时配置，不连接 Jenkins。增量协议依据 Jenkins 的 [AnnotatedLargeText](https://github.com/jenkinsci/jenkins/blob/master/core/src/main/java/hudson/console/AnnotatedLargeText.java) 与 [Stapler LargeText](https://github.com/jenkinsci/stapler/blob/master/core/src/main/java/org/kohsuke/stapler/framework/io/LargeText.java) 实现。
 
 ## 权限要求
 

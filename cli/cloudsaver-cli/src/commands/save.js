@@ -1,6 +1,4 @@
 import chalk from 'chalk';
-import inquirer from 'inquirer';
-import { Cloud115Service } from '../services/Cloud115Service.js';
 
 function formatFileSize(bytes) {
   if (bytes === 0) {
@@ -21,6 +19,7 @@ export function saveCommand(program) {
     .option('-f, --folder <id>', '指定目标文件夹ID')
     .action(async (url, options) => {
       try {
+        const { Cloud115Service } = await import('../services/Cloud115Service.js');
         const service = new Cloud115Service();
 
         if (!service.hasCookie()) {
@@ -38,6 +37,7 @@ export function saveCommand(program) {
           }
           shareUrl = url;
         } else {
+          const { default: inquirer } = await import('inquirer');
           const answer = await inquirer.prompt([
             {
               type: 'input',

@@ -2,7 +2,8 @@
 
 __myskills_skills() {
   local -a skills
-  skills=("${(@f)$(myskills list 2>/dev/null | sed -E $'s/\x1b\\[[0-9;]*m//g' | awk '/^[[:space:]]+[^[:space:]]+/ {print $1}')}")
+  skills=("${(@f)$(myskills list --names 2>/dev/null)}")
+  skills=("${skills[@]//:/\\:}")
   _describe -t skills 'skill' skills
 }
 
@@ -34,9 +35,19 @@ _myskills() {
 
   case "$words[2]" in
     link|install|unlink|uninstall)
-      _arguments \
-        $target_options \
-        '*:skill:__myskills_skills'
+      if (( CURRENT == 3 )) && [[ "$PREFIX" != -* ]]; then
+        __myskills_skills
+      elif (( CURRENT > 3 )); then
+        _arguments $target_options '(-h --help)'{-h,--help}'[显示帮助信息]'
+      else
+        _arguments '(-h --help)'{-h,--help}'[显示帮助信息]'
+      fi
+      ;;
+    list)
+      _arguments '--names[仅输出 skill 名称，每行一个]' '(-h --help)'{-h,--help}'[显示帮助信息]'
+      ;;
+    status)
+      _arguments '(-h --help)'{-h,--help}'[显示帮助信息]'
       ;;
   esac
 }

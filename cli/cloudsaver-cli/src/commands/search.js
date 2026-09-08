@@ -1,6 +1,4 @@
 import chalk from 'chalk';
-import { table } from 'table';
-import { Searcher } from '../services/Searcher.js';
 import { ConfigManager } from '../config/index.js';
 
 const CLOUD_TYPE_NAMES = {
@@ -32,9 +30,14 @@ export function searchCommand(program) {
     .alias('s')
     .description('搜索网盘资源')
     .option('-l, --limit <number>', '限制结果数量', '20')
+    .option('-c, --concurrency <number>', '搜索并发数（1-16，设为 1 时串行）', '4')
     .option('--no-table', '不使用表格格式输出')
     .action(async (keyword, options) => {
       try {
+        const concurrency = Number(options.concurrency);
+        if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 16) {
+          throw new Error('搜索并发数必须是 1-16 之间的整数');
+        }
         const config = ConfigManager.load();
 
         if (config.search.channels.length === 0) {
@@ -46,8 +49,9 @@ export function searchCommand(program) {
         console.log(chalk.blue(`🔍 正在搜索: "${keyword}"...`));
         console.log(chalk.gray(`📡 搜索 ${config.search.channels.length} 个频道...\n`));
 
+        const { Searcher } = await import('../services/Searcher.js');
         const searcher = new Searcher();
-        const results = await searcher.searchAll(keyword, config.search.channels);
+        const results = await searcher.searchAll(keyword, config.search.channels, concurrency);
 
         if (results.length === 0) {
           console.log(chalk.yellow('❌ 未找到相关资源'));
@@ -62,6 +66,7 @@ export function searchCommand(program) {
         );
 
         if (options.table !== false) {
+          const { table } = await import('table');
           const tableData = [
             ['序号', '名称', '网盘', '链接', '频道', '时间'].map((header) => chalk.bold(header)),
             ...limited.map((item, index) => {

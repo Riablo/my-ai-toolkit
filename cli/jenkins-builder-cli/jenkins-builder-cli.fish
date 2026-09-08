@@ -76,6 +76,33 @@ end
 
 complete -c jenkins-builder-cli -f
 
+# Match the complete subcommand path and argument position. Boolean options
+# may appear before the job name, but unrelated subcommands must not emit jobs.
+function __jbc_at
+    set -l words (commandline -opc)
+    set -e words[1]
+    set -l positional
+    for word in $words
+        contains -- "$word" --json --follow; and continue
+        set -a positional "$word"
+    end
+    test (count $positional) -eq (count $argv); or return 1
+    test (string join '\t' -- $positional) = (string join '\t' -- $argv)
+end
+
+function __jbc_after_job
+    set -l words (commandline -opc)
+    set -e words[1]
+    set -l positional
+    for word in $words
+        contains -- "$word" --json --follow; and continue
+        set -a positional "$word"
+    end
+    test (count $positional) -eq (math (count $argv) + 1); or return 1
+    set -e positional[-1]
+    test (string join '\t' -- $positional) = (string join '\t' -- $argv)
+end
+
 # top level
 complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'config' -d '管理本地配置'
 complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'jobs' -d '列出和管理 jobs'
@@ -85,7 +112,7 @@ complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'runs' -d '查看�
 complete -c jenkins-builder-cli -n '__fish_use_subcommand' -a 'logs' -d '查看 console output'
 
 # config
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from config' -a 'init show edit path check' -d 'config 子命令'
+complete -c jenkins-builder-cli -n '__jbc_at config' -a 'init show edit path check' -d 'config 子命令'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from config init' -l url -d 'Jenkins URL'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from config init' -l username -d '用户名'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from config init' -l token -d 'API token'
@@ -93,30 +120,30 @@ complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from config init' -l 
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from config show' -l json -d '输出 JSON'
 
 # jobs
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs' -a 'list label unlabel alias' -d 'jobs 子命令'
+complete -c jenkins-builder-cli -n '__jbc_at jobs' -a 'list label unlabel alias' -d 'jobs 子命令'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs list' -l query -d '按名称/标签/别称过滤'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs list' -l json -d '输出 JSON'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs label' -ka '(__jbc_emit_configured_jobs)'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs label' -a 'test prod' -d '标签'
+complete -c jenkins-builder-cli -n '__jbc_at jobs label' -ka '(__jbc_emit_configured_jobs)'
+complete -c jenkins-builder-cli -n '__jbc_after_job jobs label' -a 'test prod' -d '标签'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs label' -l json -d '输出 JSON'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs unlabel' -ka '(__jbc_emit_configured_jobs)'
+complete -c jenkins-builder-cli -n '__jbc_at jobs unlabel' -ka '(__jbc_emit_configured_jobs)'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs unlabel' -l json -d '输出 JSON'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs alias' -a 'list add rm' -d 'alias 子命令'
+complete -c jenkins-builder-cli -n '__jbc_at jobs alias' -a 'list add rm' -d 'alias 子命令'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs alias list' -l json -d '输出 JSON'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs alias add' -ka '(__jbc_emit_configured_jobs)'
+complete -c jenkins-builder-cli -n '__jbc_at jobs alias add' -ka '(__jbc_emit_configured_jobs)'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs alias add' -l json -d '输出 JSON'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs alias rm' -ka '(__jbc_emit_configured_jobs)'
+complete -c jenkins-builder-cli -n '__jbc_at jobs alias rm' -ka '(__jbc_emit_configured_jobs)'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from jobs alias rm' -l json -d '输出 JSON'
 
 # build / set-branch
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from build; and not __fish_seen_subcommand_from config jobs runs logs set-branch' -ka '(__jbc_emit_configured_jobs)'
+complete -c jenkins-builder-cli -n '__jbc_at build' -ka '(__jbc_emit_configured_jobs)'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from build' -l follow -d '等待构建完成'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from build' -l json -d '输出 JSON'
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from set-branch' -ka '(__jbc_emit_configured_jobs)'
+complete -c jenkins-builder-cli -n '__jbc_at set-branch' -ka '(__jbc_emit_configured_jobs)'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from set-branch' -l json -d '输出 JSON'
 
 # runs
-complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from runs' -a 'list status stop' -d 'runs 子命令'
+complete -c jenkins-builder-cli -n '__jbc_at runs' -a 'list status stop' -d 'runs 子命令'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from runs list' -l json -d '输出 JSON'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from runs status' -l json -d '输出 JSON'
 complete -c jenkins-builder-cli -n '__fish_seen_subcommand_from runs stop' -l json -d '输出 JSON'

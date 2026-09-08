@@ -2,8 +2,8 @@ import * as cheerio from 'cheerio';
 import { createTelegramAxios } from '../utils/axiosInstance.js';
 
 export class Searcher {
-  constructor() {
-    this.api = createTelegramAxios();
+  constructor(api = createTelegramAxios()) {
+    this.api = api;
     this.cloudPatterns = {
       pan115: /https?:\/\/(?:115|anxia|115cdn)\.com\/s\/[^\s<>"]+/g,
       aliyun: /https?:\/\/\w+\.(?:alipan|aliyundrive)\.com\/[^\s<>"]+/g,
@@ -94,20 +94,6 @@ export class Searcher {
     return score;
   }
 
-  compareResults(left, right) {
-    const cloudPriorityDiff = this.getResultCloudPriority(left) - this.getResultCloudPriority(right);
-    if (cloudPriorityDiff !== 0) {
-      return cloudPriorityDiff;
-    }
-
-    const clarityDiff = this.getClarityScore(right) - this.getClarityScore(left);
-    if (clarityDiff !== 0) {
-      return clarityDiff;
-    }
-
-    return new Date(right.pubDate) - new Date(left.pubDate);
-  }
-
   async searchChannel(channel, keyword) {
     try {
       const url = keyword
@@ -186,14 +172,34 @@ export class Searcher {
     }
   }
 
-  async searchAll(keyword, channels) {
-    const allResults = [];
-
-    for (const channel of channels) {
-      const results = await this.searchChannel(channel, keyword);
-      allResults.push(...results);
+  async searchAll(keyword, channels, concurrency = 4) {
+    if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 16) {
+      throw new Error('搜索并发数必须是 1-16 之间的整数');
     }
 
-    return allResults.sort((left, right) => this.compareResults(left, right));
+    const channelResults = new Array(channels.length);
+    let nextChannel = 0;
+    const worker = async () => {
+      while (nextChannel < channels.length) {
+        const index = nextChannel++;
+        channelResults[index] = await this.searchChannel(channels[index], keyword);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, channels.length) }, worker));
+
+    // Keep channel order for ties, regardless of request completion order.
+    // Compute expensive regex/date keys once per result instead of once per comparison.
+    return channelResults.flat().map((result) => ({
+      result,
+      cloudPriority: this.getResultCloudPriority(result),
+      clarity: this.getClarityScore(result),
+      timestamp: new Date(result.pubDate).getTime(),
+    })).sort((left, right) => {
+      const cloudDiff = left.cloudPriority - right.cloudPriority;
+      if (cloudDiff !== 0) return cloudDiff;
+      const clarityDiff = right.clarity - left.clarity;
+      if (clarityDiff !== 0) return clarityDiff;
+      return right.timestamp - left.timestamp;
+    }).map(({ result }) => result);
   }
 }

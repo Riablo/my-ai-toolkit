@@ -4,8 +4,7 @@
 
 它会把一个包含 HTML 和静态资源的本地目录同步到配置好的 `html_test` Git 项目里，然后自动执行：
 
-- `git fetch`
-- `git pull --ff-only`
+- `git pull --ff-only`（包含从 origin 拉取，只执行一次）
 - 覆盖目标目录
 - `git add`
 - `git commit`
@@ -136,7 +135,8 @@ https://test.720yun.com/html_test/T2Vision-demo/
 - `default_subdir` 和 `--subdir` 使用同样的路径规则
 - `--root` 和 `--subdir` 互斥；优先级为 `--root` > `--subdir` > `default_subdir` > 根目录
 - `--name` 是最终目录名，不能包含 `/`
-- 目标目录已存在时，会先复制到临时目录，再整体删除旧目录并用新目录替换，避免旧资源残留
+- 目标目录已存在时，先分块比较文件内容、符号链接和权限；无变化时不会重写目标目录，时间戳变化本身不会触发复制
+- 有变化时，会先复制到隔离的临时目录，再整体删除旧目录并用新目录替换，避免旧资源残留
 - 发布前会检查 `project_root` 是否是 Git 仓库，且工作区必须是干净的
-- 如果复制后目标内容没有变化，就不会 commit 或 push，只直接返回 URL
+- 比较或复制后目标内容没有变化时，不会 commit 或 push，只直接返回 URL；内容比较会读取文件，大目录仍有读取成本
 - `push` 会排除源目录中的 `.git/`

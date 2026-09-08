@@ -13,7 +13,7 @@ _pingcode_projects() {
 _pingcode_states() {
   local file project="" index
   file="$(_pingcode_config_file)"
-  for (( index = 3; index <= ${#words}; index++ )); do
+  for (( index = 2; index <= ${#words}; index++ )); do
     case "${words[index]}" in
       --project)
         project="${words[index + 1]:-}"
@@ -30,9 +30,21 @@ _pingcode_states() {
   fi
 }
 
+_pingcode_complete_projects() {
+  local -a projects
+  projects=("${(@f)$(_pingcode_projects)}")
+  compadd -a projects
+}
+
+_pingcode_complete_states() {
+  local -a states
+  states=("${(@f)$(_pingcode_states)}")
+  compadd -a states
+}
+
 _pingcode-cli() {
   local command="$words[2]"
-  local -a commands projects states
+  local -a commands
   commands=(
     'init:初始化配置'
     'auth:获取或刷新用户令牌'
@@ -41,8 +53,6 @@ _pingcode-cli() {
     'bug:获取一个 bug'
     'set-state:修改 bug 状态'
   )
-  projects=("${(@f)$(_pingcode_projects)}")
-  states=("${(@f)$(_pingcode_states)}")
 
   if (( CURRENT == 2 )); then
     _describe -t commands '命令' commands
@@ -61,15 +71,15 @@ _pingcode-cli() {
     bugs)
       _arguments \
         '(-h --help)'{-h,--help}'[显示帮助]' \
-        '--project[项目名称]:项目名称:($projects)' \
-        '*--state[状态名称，可重复]:状态名称:($states)' \
+        '--project[项目名称]:项目名称:_pingcode_complete_projects' \
+        '*--state[状态名称，可重复]:状态名称:_pingcode_complete_states' \
         '--created-after[覆盖全局 created_at 起点]:Unix 秒数:'
       ;;
     bug)
       _arguments '(-h --help)'{-h,--help}'[显示帮助]' '1:bug id:'
       ;;
     set-state)
-      _arguments '(-h --help)'{-h,--help}'[显示帮助]' '1:bug id:' '2:状态名称:($states)'
+      _arguments '(-h --help)'{-h,--help}'[显示帮助]' '1:bug id:' '2:状态名称:_pingcode_complete_states'
       ;;
   esac
 }

@@ -72,8 +72,11 @@ cloudsaver-cli config --set-cookie
 cloudsaver-cli search "电影名称"
 cloudsaver-cli s "电影名称"
 cloudsaver-cli search "电影名称" --limit 10
+cloudsaver-cli search "电影名称" --concurrency 4
 cloudsaver-cli search "电影名称" --no-table
 ```
+
+默认最多同时搜索 4 个频道，`--concurrency` 支持 1-16，设为 1 时串行搜索。单个频道失败后仍会展示其他频道的结果；结果继续按网盘类型、清晰度和时间排序，排序相同时保持配置中的频道顺序。
 
 ### 转存资源
 

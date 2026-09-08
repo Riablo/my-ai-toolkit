@@ -5,6 +5,7 @@
   "type": "module",
   "description": "CloudSaver CLI - 网盘资源搜索与115转存工具",
   "scripts": {
+    "test": "node --test test/*.test.js",
     "bundle": "esbuild src/index.js --bundle --platform=node --format=cjs --outfile=cloudsaver-cli.cjs"
   },
   "dependencies": {

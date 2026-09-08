@@ -26,6 +26,7 @@ _cloudsaver-cli() {
     search|s)
       _arguments \
         '--limit[限制结果数量]:limit:' \
+        '(-c --concurrency)'{-c,--concurrency}'[搜索并发数（默认 4，范围 1-16）]:concurrency:' \
         '--no-table[不使用表格格式输出]' \
         '*:keyword:'
       ;;

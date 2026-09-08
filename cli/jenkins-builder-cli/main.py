@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 import xml.etree.ElementTree as ET
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,10 @@ LABEL_ORDER = {
 
 class CLIError(RuntimeError):
     """User-facing error."""
+
+    def __init__(self, message: str, *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 @dataclass
@@ -420,8 +425,32 @@ class JenkinsClient:
         if len(message) > 400:
             message = message[:400] + "..."
         if message:
-            return CLIError(f"HTTP {response.status_code}: {url}\n{message}")
-        return CLIError(f"HTTP {response.status_code}: {url}")
+            return CLIError(f"HTTP {response.status_code}: {url}\n{message}", status_code=response.status_code)
+        return CLIError(f"HTTP {response.status_code}: {url}", status_code=response.status_code)
+
+    def find_job(self, full_name: str) -> dict[str, Any] | None:
+        """Validate one exact name without enumerating unrelated folders."""
+        url = canonical_job_url(self.base_url, full_name)
+        try:
+            item = self.get_json(
+                f"{url}/api/json",
+                params={"tree": "name,fullName,url,color,_class,buildable"},
+            )
+        except CLIError as exc:
+            if exc.status_code in (403, 404):
+                return None
+            raise
+        class_name = str(item.get("_class") or "")
+        name = str(item.get("fullName") or extract_full_name_from_job_url(self.base_url, url))
+        if name != full_name or is_container_class(class_name) or item.get("buildable") is False:
+            return None
+        return {
+            "full_name": name,
+            "url": str(item.get("url") or url).rstrip("/"),
+            "class_name": class_name,
+            "color": str(item.get("color") or ""),
+            "buildable": True,
+        }
 
     def list_jobs(self) -> list[dict[str, Any]]:
         jobs: list[dict[str, Any]] = []
@@ -524,6 +553,26 @@ class JenkinsClient:
 
     def console_text(self, job_url: str, build_number: int) -> str:
         return self.get_text(f"{job_url.rstrip('/')}/{build_number}/consoleText")
+
+    def progressive_console(self, job_url: str, build_number: int, start: int) -> tuple[str, int, bool]:
+        url = f"{job_url.rstrip('/')}/{build_number}/logText/progressiveText"
+        try:
+            response = self.session.get(url, params={"start": start}, timeout=30, verify=self.verify_ssl)
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            raise self._http_error(url, exc.response) from exc
+        except requests.RequestException as exc:
+            raise CLIError(f"请求失败: {url}\n{exc}") from exc
+        # Jenkins offsets count raw log bytes, including stripped console annotations.
+        # Neither len(text) nor the size of the UTF-8 response is a valid cursor.
+        try:
+            next_start = int(response.headers["X-Text-Size"])
+            if next_start < 0:
+                raise ValueError
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CLIError("增量日志响应缺少有效的 X-Text-Size 字节游标") from exc
+        response.encoding = "utf-8"
+        return response.text, next_start, response.headers.get("X-More-Data", "").lower() == "true"
 
     def stop_build(self, job_url: str, build_number: int) -> None:
         self.post(
@@ -799,12 +848,22 @@ def build_status_payload(full_name: str, build_number: int, job_url: str, info: 
     return payload
 
 
-def create_client_and_entries(*, with_live_branch_specs: bool = False) -> tuple[dict[str, Any], JenkinsClient, list[JobEntry]]:
+def create_client_and_entries(*, with_live_branch_specs: bool = False, ref: str | None = None) -> tuple[dict[str, Any], JenkinsClient, list[JobEntry]]:
     config = load_config(required=True)
     client = JenkinsClient(config)
+    live_jobs = None
+    if ref:
+        exact = client.find_job(ref)
+        if exact is not None:
+            live_jobs = [exact]
+        else:
+            # Exact remote names retain priority over local aliases. Validate all
+            # alias owners so removed/disabled jobs do not create false ambiguity.
+            aliases = [client.find_job(name) for name in alias_owners(config, ref)]
+            live_jobs = [job for job in aliases if job is not None] or None
     entries = job_entries_from_live_jobs(
         config,
-        client.list_jobs(),
+        client.list_jobs() if live_jobs is None else live_jobs,
         client=client,
         with_live_branch_specs=with_live_branch_specs,
     )
@@ -900,9 +959,10 @@ def cmd_config_check(args: argparse.Namespace) -> None:
 
 
 def cmd_jobs_list(args: argparse.Namespace) -> None:
-    config, client, entries = create_client_and_entries(with_live_branch_specs=True)
-    _ = client
+    _, client, entries = create_client_and_entries()
     filtered = filter_jobs(entries, query=args.query)
+    for entry in filtered:
+        entry.live_branch_specifier = fetch_live_branch_specifier(client, entry.url)
     if args.json:
         print_json([job_info_payload(entry) for entry in filtered])
         return
@@ -910,7 +970,7 @@ def cmd_jobs_list(args: argparse.Namespace) -> None:
 
 
 def cmd_jobs_label(args: argparse.Namespace) -> None:
-    config, _, entries = create_client_and_entries()
+    config, _, entries = create_client_and_entries(ref=args.job_ref)
     entry = resolve_job_ref(args.job_ref, entries)
     meta = normalize_job_meta(config.setdefault("jobs", {}).get(entry.full_name) or {})
     meta["label"] = args.label
@@ -926,7 +986,7 @@ def cmd_jobs_label(args: argparse.Namespace) -> None:
 
 
 def cmd_jobs_unlabel(args: argparse.Namespace) -> None:
-    config, _, entries = create_client_and_entries()
+    config, _, entries = create_client_and_entries(ref=args.job_ref)
     entry = resolve_job_ref(args.job_ref, entries)
     meta = normalize_job_meta(config.setdefault("jobs", {}).get(entry.full_name) or {})
     meta.pop("label", None)
@@ -968,7 +1028,7 @@ def cmd_jobs_alias_list(args: argparse.Namespace) -> None:
 
 
 def cmd_jobs_alias_add(args: argparse.Namespace) -> None:
-    config, _, entries = create_client_and_entries()
+    config, _, entries = create_client_and_entries(ref=args.job_ref)
     entry = resolve_job_ref(args.job_ref, entries)
     alias = args.alias.strip()
     if not alias:
@@ -997,7 +1057,7 @@ def cmd_jobs_alias_add(args: argparse.Namespace) -> None:
 
 
 def cmd_jobs_alias_rm(args: argparse.Namespace) -> None:
-    config, _, entries = create_client_and_entries()
+    config, _, entries = create_client_and_entries(ref=args.job_ref)
     entry = resolve_job_ref(args.job_ref, entries)
     alias = args.alias.strip()
     meta = normalize_job_meta(config.setdefault("jobs", {}).get(entry.full_name) or {})
@@ -1035,7 +1095,7 @@ def update_branch_specifier(
 
 
 def cmd_set_branch(args: argparse.Namespace) -> None:
-    config, client, entries = create_client_and_entries()
+    config, client, entries = create_client_and_entries(ref=args.ref)
     _ = config
     entry = resolve_job_ref(args.ref, entries)
 
@@ -1092,7 +1152,7 @@ def _trigger_and_collect(
 
 
 def cmd_build(args: argparse.Namespace) -> None:
-    config, client, entries = create_client_and_entries(with_live_branch_specs=args.ref is None)
+    config, client, entries = create_client_and_entries(with_live_branch_specs=args.ref is None, ref=args.ref)
 
     if args.ref:
         targets = [resolve_job_ref(args.ref, entries)]
@@ -1189,26 +1249,77 @@ def cmd_logs(args: argparse.Namespace) -> None:
         print_json(payload)
         return
 
-    last_text = ""
-    first_iteration = True
+    if not args.follow:
+        text = client.console_text(job_url, build_number)
+        emit_log_text(text, args.tail)
+        return
+
+    start = 0
+    catching_up = True
+    initial_tail = LogTailBuffer(args.tail) if args.tail and args.tail > 0 else None
     poll_interval = int(config["defaults"].get("poll_interval_seconds", DEFAULT_POLL_INTERVAL_SECONDS))
     while True:
-        text = client.console_text(job_url, build_number)
-        if first_iteration and args.tail and args.tail > 0:
-            lines = text.splitlines()
-            text_to_print = "\n".join(lines[-args.tail :])
-            if text_to_print:
-                print(text_to_print)
+        previous_start = start
+        text, start, more = client.progressive_console(job_url, build_number, start)
+        if initial_tail is not None:
+            if start < previous_start:
+                initial_tail.clear()
+            initial_tail.append(text)
+            if not text or not more:
+                emit_log_text(initial_tail.text())
+                initial_tail = None
         else:
-            delta = text[len(last_text) :] if text.startswith(last_text) else text
-            if delta:
-                print(delta, end="" if delta.endswith("\n") else "\n")
-        last_text = text
-        info = client.build_info(job_url, build_number)
-        if not args.follow or not info.get("building", False):
+            emit_log_text(text)
+        if catching_up:
+            # Running logs may be paginated. Drain the initial backlog without
+            # a poll delay, whether printing every page or buffering its tail.
+            if text and more:
+                continue
+            catching_up = False
+        if not more:
             break
-        first_iteration = False
         time.sleep(poll_interval)
+
+
+class LogTailBuffer:
+    """Retain only the last N lines while draining initial log pages."""
+
+    def __init__(self, lines: int):
+        self.lines: deque[str] = deque(maxlen=lines)
+        self.pending = ""
+        self.after_cr = False
+
+    def clear(self) -> None:
+        self.lines.clear()
+        self.pending = ""
+        self.after_cr = False
+
+    def append(self, text: str) -> None:
+        if not text:
+            return
+        if self.after_cr and text.startswith("\n"):
+            text = text[1:]
+        self.after_cr = text.endswith("\r")
+        for line in io.StringIO(text, newline=None):
+            if line.endswith("\n"):
+                self.lines.append(self.pending + line[:-1])
+                self.pending = ""
+            else:
+                self.pending += line
+
+    def text(self) -> str:
+        lines = deque(self.lines, maxlen=self.lines.maxlen)
+        if self.pending:
+            lines.append(self.pending)
+        return "\n".join(lines)
+
+
+def emit_log_text(text: str, tail: int | None = None) -> None:
+    if tail and tail > 0:
+        # Keep only N lines instead of materializing a second copy of every line.
+        text = "\n".join(deque((line.rstrip("\r\n") for line in io.StringIO(text, newline=None)), maxlen=tail))
+    if text:
+        print(text, end="" if text.endswith("\n") else "\n", flush=True)
 
 
 def build_parser() -> argparse.ArgumentParser:

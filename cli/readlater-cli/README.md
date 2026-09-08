@@ -82,4 +82,16 @@ readlater-cli <url> --summary-length 180
 2. 普通网页：优先读取 `og:title` / `twitter:title` / `<title>` 和 `og:description` / `description` / `twitter:description`。
 3. 如果没有概要元信息，则从页面正文文本中截取一段作为概要。
 
+非 HTML 链接只读取响应头，不下载文件正文。单次响应最多读取 4 MiB（另读取 1 字节判断是否超限），解压后的正文上限为 8 MiB；超过限制会显示错误。错误响应和 X oEmbed 同样受此限制。
+
+正文摘要最多保存 800 个文本块（包含换行）和 64 KiB 字符，避免长页面占用过多内存。只有最高优先级的标题、摘要、规范链接及站点名称都已齐全时才提前停止 HTML 解析；否则继续在下载范围内查找后续元信息。
+
 X 帖子如果已删除、私密或受限，oEmbed 可能无法返回正文；此时工具会退回到 URL 本身，至少保留标题和链接。
+
+## 本地回归测试
+
+```bash
+python3 cli/readlater-cli/test_main.py
+```
+
+测试使用模拟响应，不请求外部网站。

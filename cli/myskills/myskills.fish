@@ -2,7 +2,12 @@
 
 # 动态获取 skill 列表
 function __myskills_skills
-    myskills list 2>/dev/null | string replace -ra '\e\[[0-9;]*m' '' | string match -r '^\s+\S+' | string trim
+    myskills list --names 2>/dev/null
+end
+
+function __myskills_command_is
+    set -l words (commandline -opc)
+    test (count $words) -ge 2; and contains -- $words[2] $argv
 end
 
 # 禁用文件补全
@@ -17,13 +22,16 @@ complete -c myskills -n "not __fish_seen_subcommand_from list link install unlin
 complete -c myskills -n "not __fish_seen_subcommand_from list link install unlink uninstall status" -a status -d '查看所有 skills 的状态'
 
 # link / install / unlink / uninstall 的 skill 名称补全
-complete -c myskills -n "__fish_seen_subcommand_from link install unlink uninstall" -a "(__myskills_skills)"
+complete -c myskills -n "__myskills_command_is link install unlink uninstall; and test (count (commandline -opc)) -eq 2; and not string match -q -- '-*' (commandline -ct)" -a "(__myskills_skills)"
 
 # link / install / unlink / uninstall 的目标参数补全
-complete -c myskills -n "__fish_seen_subcommand_from link install unlink uninstall" -l agents -d '~/.agents/skills/'
-complete -c myskills -n "__fish_seen_subcommand_from link install unlink uninstall" -l claude -d '~/.claude/skills/'
-complete -c myskills -n "__fish_seen_subcommand_from link install unlink uninstall" -l local-agents -d './.agents/skills/'
-complete -c myskills -n "__fish_seen_subcommand_from link install unlink uninstall" -l local-claude -d './.claude/skills/'
+complete -c myskills -n "__myskills_command_is link install unlink uninstall; and test (count (commandline -opc)) -ge 3" -l agents -d '~/.agents/skills/'
+complete -c myskills -n "__myskills_command_is link install unlink uninstall; and test (count (commandline -opc)) -ge 3" -l claude -d '~/.claude/skills/'
+complete -c myskills -n "__myskills_command_is link install unlink uninstall; and test (count (commandline -opc)) -ge 3" -l local-agents -d './.agents/skills/'
+complete -c myskills -n "__myskills_command_is link install unlink uninstall; and test (count (commandline -opc)) -ge 3" -l local-claude -d './.claude/skills/'
+
+# list 的纯名称输出
+complete -c myskills -n "__myskills_command_is list" -l names -d '仅输出 skill 名称，每行一个'
 
 # 全局 -h/--help
 complete -c myskills -s h -l help -d '显示帮助信息'

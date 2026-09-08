@@ -4,6 +4,13 @@ set -euo pipefail
 API_BASE="https://open.pingcode.com"
 CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/pingcode-cli"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
+RUNTIME_DIR=""
+
+init_runtime() {
+  [ -n "$RUNTIME_DIR" ] && return
+  RUNTIME_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pingcode-cli.XXXXXX")"
+  trap 'rm -rf "$RUNTIME_DIR"' EXIT
+}
 
 die() {
   printf '错误：%s\n' "$1" >&2
@@ -19,31 +26,47 @@ require_commands() {
   for command in curl jq; do
     command -v "$command" >/dev/null 2>&1 || die "缺少依赖：${command}"
   done
+  init_runtime
 }
 
 validate_timestamp() {
   [[ "$1" =~ ^[0-9]+$ ]] || die "时间戳必须是 Unix 秒数：$1"
 }
 
-validate_config() {
+# The small NUL-delimited snapshot is shared by command substitutions. Token
+# refreshes atomically replace it, so later requests also see refreshed fields.
+load_config_fields() {
   [ -f "$CONFIG_FILE" ] || die "尚未初始化。请先运行 pingcode-cli init"
-  jq -e 'type == "object"' "$CONFIG_FILE" >/dev/null 2>&1 ||
-    die "配置文件不是有效的 JSON：${CONFIG_FILE}"
+  local snapshot
+  snapshot="$(mktemp "$RUNTIME_DIR/auth.XXXXXX")"
+  jq -j '
+    if type != "object" then error("配置必须是 JSON 对象") else . end |
+    ["client_id", "client_secret", "my_assignee_id"] as $keys |
+    [. as $config | $keys[] | select($config[.] | type != "string" or length == 0)] as $missing |
+    if ($missing | length) > 0 then error("配置缺少必要字段：" + ($missing | join(" "))) else . end |
+    if (.created_after == null) or
+      ((.created_after | type) == "number" and .created_after >= 0 and .created_after == (.created_after | floor))
+    then . else error("配置字段 created_after 必须是 null 或 Unix 秒数") end |
+    if (.projects // [] | type) == "array" then . else error("配置字段 projects 必须是数组") end |
+    (.client_id, .client_secret, .my_assignee_id, (.created_after | tojson),
+      (.access_token // ""), (.refresh_token // ""), (.expires_in // 0), (.token_obtained_at // 0)) |
+    tostring + "\u0000"
+  ' "$CONFIG_FILE" > "$snapshot" || die "配置校验失败：${CONFIG_FILE}"
+  mv -f "$snapshot" "$RUNTIME_DIR/auth"
+}
 
-  local key missing=()
-  for key in client_id client_secret my_assignee_id; do
-    jq -e --arg key "$key" '(.[$key] | type == "string" and length > 0)' "$CONFIG_FILE" >/dev/null 2>&1 ||
-      missing+=("$key")
-  done
-  [ "${#missing[@]}" -eq 0 ] ||
-    die "配置缺少必要字段：${missing[*]}。请补全 ${CONFIG_FILE}，或重新运行 pingcode-cli init"
-
-  jq -e '
-    (.created_after == null) or
-    ((.created_after | type) == "number" and .created_after >= 0 and .created_after == (.created_after | floor))
-  ' "$CONFIG_FILE" >/dev/null 2>&1 || die "配置字段 created_after 必须是 null 或 Unix 秒数"
-  jq -e '(.projects // [] | type == "array")' "$CONFIG_FILE" >/dev/null 2>&1 ||
-    die "配置字段 projects 必须是数组"
+validate_config() {
+  [ -f "$RUNTIME_DIR/auth" ] || load_config_fields
+  local -a fields
+  readarray -d '' -t fields < "$RUNTIME_DIR/auth"
+  CLIENT_ID="${fields[0]}"
+  CLIENT_SECRET="${fields[1]}"
+  MY_ASSIGNEE_ID="${fields[2]}"
+  CREATED_AFTER="${fields[3]}"
+  ACCESS_TOKEN="${fields[4]}"
+  REFRESH_TOKEN="${fields[5]}"
+  EXPIRES_IN="${fields[6]}"
+  TOKEN_OBTAINED_AT="${fields[7]}"
 }
 
 write_config() {
@@ -51,9 +74,14 @@ write_config() {
   shift
   local tmp
   tmp="$(mktemp "${CONFIG_DIR}/config.XXXXXX")"
-  jq "$@" "$filter" "$CONFIG_FILE" > "$tmp"
+  jq "$@" "$filter" "$CONFIG_FILE" > "$tmp" || {
+    rm -f "$tmp"
+    die "无法更新配置：${CONFIG_FILE}"
+  }
   chmod 600 "$tmp"
   mv -f "$tmp" "$CONFIG_FILE"
+  load_config_fields
+  validate_config
 }
 
 cmd_init() {
@@ -117,36 +145,24 @@ http_request() {
 }
 
 save_tokens() {
-  local response="$1" fallback_refresh="${2:-}"
-  jq -e '
-    (.access_token | type == "string" and length > 0) and
-    ((.expires_in | type) == "number" and .expires_in > 0 and .expires_in == (.expires_in | floor))
-  ' <<< "$response" >/dev/null 2>&1 || return 1
-
-  local access_token refresh_token expires_in obtained_at
-  access_token="$(jq -r '.access_token' <<< "$response")"
-  refresh_token="$(jq -r '.refresh_token // empty' <<< "$response")"
-  refresh_token="${refresh_token:-$fallback_refresh}"
-  [ -n "$refresh_token" ] || return 1
-  expires_in="$(jq -r '.expires_in' <<< "$response")"
-  obtained_at="$(date +%s)"
-
-  write_config '
-    .access_token = $access_token |
-    .refresh_token = $refresh_token |
-    .expires_in = $expires_in |
-    .token_obtained_at = $obtained_at
-  ' --arg access_token "$access_token" \
-    --arg refresh_token "$refresh_token" \
-    --argjson expires_in "$expires_in" \
-    --argjson obtained_at "$obtained_at"
+  local response="$1" fallback_refresh="${2:-}" token_file
+  token_file="$(mktemp "$RUNTIME_DIR/tokens.XXXXXX")"
+  jq --arg fallback "$fallback_refresh" --argjson now "$EPOCHSECONDS" '
+    select((.access_token | type == "string" and length > 0) and
+      ((.expires_in | type) == "number" and .expires_in > 0 and .expires_in == (.expires_in | floor))) |
+    (.refresh_token // "" | if . == "" then $fallback else . end) as $refresh |
+    select($refresh | type == "string" and length > 0) |
+    {access_token, refresh_token: $refresh, expires_in, token_obtained_at: $now}
+  ' <<< "$response" > "$token_file" || return 1
+  [ -s "$token_file" ] || return 1
+  write_config '. + $tokens[0]' --slurpfile tokens "$token_file"
 }
 
 request_tokens() {
   local grant_type="$1" value="$2" fallback_refresh="${3:-}"
   local client_id client_secret
-  client_id="$(jq -r '.client_id' "$CONFIG_FILE")"
-  client_secret="$(jq -r '.client_secret' "$CONFIG_FILE")"
+  client_id="$CLIENT_ID"
+  client_secret="$CLIENT_SECRET"
 
   if [ "$grant_type" = "authorization_code" ]; then
     http_request GET "${API_BASE}/v1/auth/token" --get \
@@ -174,18 +190,13 @@ clear_tokens() {
 }
 
 token_is_valid() {
-  local access_token expires_in obtained_at now
-  access_token="$(jq -r '.access_token // empty' "$CONFIG_FILE")"
-  expires_in="$(jq -r '.expires_in // 0' "$CONFIG_FILE")"
-  obtained_at="$(jq -r '.token_obtained_at // 0' "$CONFIG_FILE")"
-  [[ "$expires_in" =~ ^[0-9]+$ && "$obtained_at" =~ ^[0-9]+$ ]] || return 1
-  now="$(date +%s)"
-  [ -n "$access_token" ] && (( obtained_at + expires_in > now + 60 ))
+  [[ "$EXPIRES_IN" =~ ^[0-9]+$ && "$TOKEN_OBTAINED_AT" =~ ^[0-9]+$ ]] || return 1
+  [ -n "$ACCESS_TOKEN" ] && (( TOKEN_OBTAINED_AT + EXPIRES_IN > EPOCHSECONDS + 60 ))
 }
 
 authorize_with_code() {
   local client_id encoded_client_id code
-  client_id="$(jq -r '.client_id' "$CONFIG_FILE")"
+  client_id="$CLIENT_ID"
   encoded_client_id="$(jq -nr --arg value "$client_id" '$value | @uri')"
   printf '请手动打开以下地址完成授权：\n%s\n' \
     "https://open.pingcode.com/oauth2/authorize?response_type=code&client_id=${encoded_client_id}" >&2
@@ -198,7 +209,7 @@ authorize_with_code() {
 
 try_refresh_token() {
   local refresh_token
-  refresh_token="$(jq -r '.refresh_token // empty' "$CONFIG_FILE")"
+  refresh_token="$REFRESH_TOKEN"
   [ -n "$refresh_token" ] || return 1
   printf 'access_token 已过期，正在刷新...\n' >&2
   if request_tokens refresh_token "$refresh_token" "$refresh_token"; then
@@ -241,14 +252,14 @@ api_request() {
   shift 2
   ensure_token
   local token
-  token="$(jq -r '.access_token' "$CONFIG_FILE")"
+  token="$ACCESS_TOKEN"
   http_request "$method" "${API_BASE}${endpoint}" \
     -H 'Accept: application/json' \
     -H "Authorization: Bearer ${token}" "$@"
 
   if [ "$HTTP_STATUS" = "401" ]; then
     renew_token
-    token="$(jq -r '.access_token' "$CONFIG_FILE")"
+    token="$ACCESS_TOKEN"
     http_request "$method" "${API_BASE}${endpoint}" \
       -H 'Accept: application/json' \
       -H "Authorization: Bearer ${token}" "$@"
@@ -258,34 +269,56 @@ api_request() {
   printf '%s\n' "$HTTP_BODY"
 }
 
-fetch_projects() {
-  local page=0 all='[]' previous_count=-1 response page_count total count
+fetch_paginated() {
+  local endpoint="$1" kind="$2" label="$3"
+  shift 3
+  local page=0 previous_count=-1 total page_count id count=0
+  local response_file metadata_file items_file
+  local -A seen=()
+  response_file="$(mktemp "$RUNTIME_DIR/response.XXXXXX")"
+  metadata_file="$(mktemp "$RUNTIME_DIR/metadata.XXXXXX")"
+  items_file="$(mktemp "$RUNTIME_DIR/items.XXXXXX")"
   while :; do
-    response="$(api_request GET '/v1/project/projects' --get \
-      --data-urlencode "page_index=${page}" --data-urlencode 'page_size=100')"
-    jq -e '.values | type == "array"' <<< "$response" >/dev/null 2>&1 ||
-      die "项目列表响应缺少 values 数组"
-    all="$(jq -cn --argjson old "$all" --argjson new "$(jq '.values' <<< "$response")" \
-      '$old + $new | map(select((.id | type) == "string" and (.name | type) == "string")) | unique_by(.id)')"
-    page_count="$(jq '.values | length' <<< "$response")"
-    total="$(jq -er '
+    api_request GET "$endpoint" --get "$@" \
+      --data-urlencode "page_index=${page}" --data-urlencode 'page_size=100' > "$response_file"
+    jq -r --arg kind "$kind" '
+      if (.values | type) != "array" then error("响应缺少 values 数组") else . end |
       (.total // (.values | length)) as $total |
-      select(($total | type) == "number" and $total >= 0 and $total == ($total | floor)) |
-      $total
-    ' <<< "$response")" || die "项目列表响应的 total 无效"
-    count="$(jq 'length' <<< "$all")"
+      if ($total | type) == "number" and $total >= 0 and $total == ($total | floor)
+      then . else error("响应的 total 无效") end |
+      ([$total, (.values | length)] | @tsv),
+      (.values[] | select($kind != "projects" or
+        ((.id | type) == "string" and (.name | type) == "string")) | .id | tojson)
+    ' "$response_file" > "$metadata_file" || die "${label}响应无效"
+    {
+      IFS=$'\t' read -r total page_count
+      while IFS= read -r id; do
+        if [[ ${seen["$id"]+present} != present ]]; then
+          seen["$id"]=1
+          count=$((count + 1))
+        fi
+      done
+    } < "$metadata_file"
+    jq -c --arg kind "$kind" '.values[] | select($kind != "projects" or
+      ((.id | type) == "string" and (.name | type) == "string"))' "$response_file" >> "$items_file"
     (( count >= total )) && break
-    (( page_count > 0 && count > previous_count )) || die "项目列表分页没有前进，已停止请求"
+    (( page_count > 0 && count > previous_count )) || die "${label}分页没有前进，已停止请求"
     previous_count="$count"
     page=$((page + 1))
   done
-  printf '%s\n' "$all"
+  jq -s 'unique_by(.id)' "$items_file"
+}
+
+fetch_projects() {
+  fetch_paginated '/v1/project/projects' projects 项目列表
 }
 
 cmd_projects_refresh() {
   validate_config
-  local raw_projects projects='[]' project project_id project_name response states cached_project
-  raw_projects="$(fetch_projects)"
+  local raw_projects projects_file project project_id project_name response
+  raw_projects="$(mktemp "$RUNTIME_DIR/projects-raw.XXXXXX")"
+  projects_file="$(mktemp "$RUNTIME_DIR/projects.XXXXXX")"
+  fetch_projects > "$raw_projects"
   while IFS= read -r project; do
     project_id="$(jq -r '.id' <<< "$project")"
     project_name="$(jq -r '.name' <<< "$project")"
@@ -294,19 +327,16 @@ cmd_projects_refresh() {
       --data-urlencode 'work_item_type_id=bug' \
       --data-urlencode 'page_index=0' \
       --data-urlencode 'page_size=100')"
-    jq -e '.values | type == "array"' <<< "$response" >/dev/null 2>&1 ||
-      die "项目 ${project_name} 的状态响应缺少 values 数组"
-    states="$(jq '[.values[] | select((.id | type) == "string" and (.name | type) == "string") | {id, name}] | unique_by(.id)' <<< "$response")"
-    cached_project="$(jq -cn --arg id "$project_id" --arg name "$project_name" --argjson states "$states" \
-      '{id: $id, name: $name, states: $states}')"
-    projects="$(jq -cn --argjson projects "$projects" --argjson project "$cached_project" '$projects + [$project]')"
-  done < <(jq -c '.[]' <<< "$raw_projects")
+    jq -c --arg id "$project_id" --arg name "$project_name" '
+      if (.values | type) != "array" then error("状态响应缺少 values 数组") else . end |
+      {id: $id, name: $name, states: [.values[] |
+        select((.id | type) == "string" and (.name | type) == "string") | {id, name}] | unique_by(.id)}
+    ' <<< "$response" >> "$projects_file" || die "项目 ${project_name} 的状态响应无效"
+  done < <(jq -c '.[]' "$raw_projects")
 
-  local refreshed_at
-  refreshed_at="$(date +%s)"
   write_config '.projects = $projects | .projects_refreshed_at = $refreshed_at' \
-    --argjson projects "$projects" --argjson refreshed_at "$refreshed_at"
-  printf '已缓存 %s 个项目及其 bug 状态。\n' "$(jq 'length' <<< "$projects")" >&2
+    --slurpfile projects "$projects_file" --argjson refreshed_at "$EPOCHSECONDS"
+  printf '已缓存 %s 个项目及其 bug 状态。\n' "$(jq -s 'length' "$projects_file")" >&2
 }
 
 projects_cache_is_valid() {
@@ -362,33 +392,12 @@ resolve_state_id() {
 
 fetch_work_items() {
   local project_id="$1" state_id="$2" assignee_id="$3"
-  local page=0 all='[]' previous_count=-1 response page_count total count
-  while :; do
-    response="$(api_request GET '/v1/project/work_items' --get \
-      --data-urlencode "project_id=${project_id}" \
-      --data-urlencode "assignee_id=${assignee_id}" \
-      --data-urlencode "state_id=${state_id}" \
-      --data-urlencode 'type_id=bug' \
-      --data-urlencode 'include_public_image_token=description' \
-      --data-urlencode "page_index=${page}" \
-      --data-urlencode 'page_size=100')"
-    jq -e '.values | type == "array"' <<< "$response" >/dev/null 2>&1 ||
-      die "工作项列表响应缺少 values 数组"
-    all="$(jq -cn --argjson old "$all" --argjson new "$(jq '.values' <<< "$response")" \
-      '$old + $new | unique_by(.id)')"
-    page_count="$(jq '.values | length' <<< "$response")"
-    total="$(jq -er '
-      (.total // (.values | length)) as $total |
-      select(($total | type) == "number" and $total >= 0 and $total == ($total | floor)) |
-      $total
-    ' <<< "$response")" || die "工作项列表响应的 total 无效"
-    count="$(jq 'length' <<< "$all")"
-    (( count >= total )) && break
-    (( page_count > 0 && count > previous_count )) || die "工作项列表分页没有前进，已停止请求"
-    previous_count="$count"
-    page=$((page + 1))
-  done
-  printf '%s\n' "$all"
+  fetch_paginated '/v1/project/work_items' work_items 工作项列表 \
+    --data-urlencode "project_id=${project_id}" \
+    --data-urlencode "assignee_id=${assignee_id}" \
+    --data-urlencode "state_id=${state_id}" \
+    --data-urlencode 'type_id=bug' \
+    --data-urlencode 'include_public_image_token=description'
 }
 
 add_image_access_tokens() {
@@ -443,7 +452,7 @@ shape_bug() {
 }
 
 cmd_bugs() {
-  local project_name="" cutoff="" state_name project project_id assignee_id state_id items='[]' batch
+  local project_name="" cutoff="" state_name project project_id assignee_id state_id batches_file
   local -a state_names=() state_ids=()
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -475,9 +484,10 @@ cmd_bugs() {
   [ -n "$project_name" ] || die "bugs 需要 --project <项目名称>"
   [ -z "$cutoff" ] || validate_timestamp "$cutoff"
 
+  validate_config
   project="$(resolve_project "$project_name")"
   project_id="$(jq -r '.id' <<< "$project")"
-  assignee_id="$(jq -r '.my_assignee_id' "$CONFIG_FILE")"
+  assignee_id="$MY_ASSIGNEE_ID"
   if [ "${#state_names[@]}" -eq 0 ]; then
     readarray -t state_ids < <(jq -r '.states[].id' <<< "$project")
   else
@@ -490,16 +500,16 @@ cmd_bugs() {
   [ "${#state_ids[@]}" -gt 0 ] || die "项目 ${project_name} 没有缓存任何 bug 状态，请运行 pingcode-cli projects refresh"
 
   readarray -t state_ids < <(printf '%s\n' "${state_ids[@]}" | awk '!seen[$0]++')
+  batches_file="$(mktemp "$RUNTIME_DIR/batches.XXXXXX")"
   for state_id in "${state_ids[@]}"; do
-    batch="$(fetch_work_items "$project_id" "$state_id" "$assignee_id")"
-    items="$(jq -cn --argjson old "$items" --argjson new "$batch" '$old + $new | unique_by(.id)')"
+    fetch_work_items "$project_id" "$state_id" "$assignee_id" >> "$batches_file"
   done
 
   if [ -z "$cutoff" ]; then
-    cutoff="$(jq -c '.created_after' "$CONFIG_FILE")"
+    cutoff="$CREATED_AFTER"
   fi
   [ "$cutoff" = "null" ] || cutoff="${cutoff:-null}"
-  shape_bugs "$cutoff" <<< "$items"
+  jq -s 'add | unique_by(.id)' "$batches_file" | shape_bugs "$cutoff"
 }
 
 get_bug() {
@@ -661,30 +671,35 @@ case "${1:-}" in
     shift
     is_help "$@" && { usage_auth; exit 0; }
     require_commands
+    validate_config
     cmd_auth "$@"
     ;;
   projects)
     shift
     is_help "$@" && { usage_projects; exit 0; }
     require_commands
+    validate_config
     cmd_projects "$@"
     ;;
   bugs)
     shift
     is_help "$@" && { usage_bugs; exit 0; }
     require_commands
+    validate_config
     cmd_bugs "$@"
     ;;
   bug)
     shift
     is_help "$@" && { usage_bug; exit 0; }
     require_commands
+    validate_config
     cmd_bug "$@"
     ;;
   set-state)
     shift
     is_help "$@" && { usage_set_state; exit 0; }
     require_commands
+    validate_config
     cmd_set_state "$@"
     ;;
   *) die "未知命令：$1。使用 pingcode-cli --help 查看帮助" ;;

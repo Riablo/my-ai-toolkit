@@ -24,24 +24,33 @@ RESET='\033[0m'
 # ─── 工具函数 ────────────────────────────────────────────────────
 die() { echo -e "${RED}错误：$1${RESET}" >&2; exit 1; }
 
-# 获取所有 skill 名称
+# 获取所有 skill 名称，写入调用方数组
 get_skills() {
-  local skills=()
+  local -n _skills=$1
+  local dir name
+  _skills=()
   for dir in "$SKILLS_DIR"/*/; do
     [ -d "$dir" ] || continue
     [ -f "$dir/SKILL.md" ] || continue
-    skills+=("$(basename "$dir")")
+    name="${dir%/}"
+    _skills+=("${name##*/}")
   done
-  if [ ${#skills[@]} -gt 0 ]; then
-    echo "${skills[@]}"
-  fi
 }
 
-# 从 SKILL.md 提取 description
+# 从 SKILL.md 提取 description，写入调用方变量；截断在 list 中批量执行
 get_skill_desc() {
+  local -n _desc=$2
   local skill_md="$SKILLS_DIR/$1/SKILL.md"
-  [ -f "$skill_md" ] || return
-  sed -n '/^description:/{ s/^description: *//; p; q; }' "$skill_md" | cut -c1-60
+  local line
+  _desc=""
+  [ -f "$skill_md" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [[ "$line" == description:* ]]; then
+      _desc="${line#description:}"
+      _desc="${_desc#"${_desc%%[! ]*}"}"
+      break
+    fi
+  done < "$skill_md"
 }
 
 # 检查 skill 是否存在
@@ -71,21 +80,33 @@ resolve_targets() {
 # ─── list 命令 ───────────────────────────────────────────────────
 cmd_list() {
   local skills=()
-  local raw
-  raw="$(get_skills)"
-  [ -n "$raw" ] && read -ra skills <<< "$raw"
+  get_skills skills
+
+  if [ "${1:-}" = "--names" ]; then
+    if [ ${#skills[@]} -gt 0 ]; then
+      printf '%s\n' "${skills[@]}"
+    fi
+    return 0
+  fi
 
   if [ ${#skills[@]} -eq 0 ]; then
     echo "没有找到任何 skill。"
     return
   fi
 
+  local skill desc i
+  local descriptions=()
+  for skill in "${skills[@]}"; do
+    get_skill_desc "$skill" desc
+    descriptions+=("$desc")
+  done
+  # 保留系统 cut 的字符截断行为，只启动一次，避免每个 skill 启动 sed/cut。
+  readarray -t descriptions < <(printf '%s\n' "${descriptions[@]}" | cut -c1-60)
+
   echo -e "${BOLD}可用的 Skills：${RESET}"
   echo ""
-  for skill in "${skills[@]}"; do
-    local desc
-    desc="$(get_skill_desc "$skill")"
-    echo -e "  ${CYAN}$skill${RESET}  ${DIM}$desc${RESET}"
+  for i in "${!skills[@]}"; do
+    echo -e "  ${CYAN}${skills[$i]}${RESET}  ${DIM}${descriptions[$i]}${RESET}"
   done
   echo ""
 }
@@ -229,9 +250,7 @@ cmd_uninstall() {
 # ─── status 命令 ─────────────────────────────────────────────────
 cmd_status() {
   local skills=()
-  local raw
-  raw="$(get_skills)"
-  [ -n "$raw" ] && read -ra skills <<< "$raw"
+  get_skills skills
 
   if [ ${#skills[@]} -eq 0 ]; then
     echo "没有找到任何 skill。"
@@ -276,7 +295,7 @@ ${BOLD}用法：${RESET}
   myskills <命令> [参数]
 
 ${BOLD}命令：${RESET}
-  list            列出所有可用的 skills
+  list [--names]  列出所有可用的 skills（--names 仅输出名称，每行一个）
   link <skill>    将 skill 软链接到目标目录
   install <skill> 将 skill 复制到目标目录（覆盖已有内容）
   unlink <skill>  移除 skill 的软链接
@@ -296,6 +315,7 @@ ${BOLD}目标参数（link / install / unlink / uninstall 可用，可多选）�
 
 ${BOLD}示例：${RESET}
   myskills list
+  myskills list --names                       # 纯名称输出，供脚本与补全使用
   myskills link mosaic-notes                   # 链接到 ~/.agents/ 和 ~/.claude/
   myskills install mosaic-notes                # 复制到 ~/.agents/ 和 ~/.claude/
   myskills link mosaic-notes --claude           # 只链接到 ~/.claude/
@@ -372,7 +392,7 @@ case "${1:-}" in
   list)
     shift
     case "${1:-}" in -h|--help) usage; exit 0;; esac
-    cmd_list
+    cmd_list "$@"
     ;;
   link)
     shift

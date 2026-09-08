@@ -1,7 +1,10 @@
 import chalk from 'chalk';
-import inquirer from 'inquirer';
 import { ConfigManager } from '../config/index.js';
-import { Cloud115Service } from '../services/Cloud115Service.js';
+
+async function prompt(questions) {
+  const { default: inquirer } = await import('inquirer');
+  return inquirer.prompt(questions);
+}
 
 export function configCommand(program) {
   program
@@ -18,7 +21,7 @@ export function configCommand(program) {
         const config = ConfigManager.load();
 
         if (options.setCookie) {
-          const { cookie } = await inquirer.prompt([
+          const { cookie } = await prompt([
             {
               type: 'password',
               name: 'cookie',
@@ -34,6 +37,7 @@ export function configCommand(program) {
           ]);
 
           console.log(chalk.blue('\n🔍 正在验证Cookie...'));
+          const { Cloud115Service } = await import('../services/Cloud115Service.js');
           const service = new Cloud115Service();
           service.setCookie(cookie);
 
@@ -48,7 +52,7 @@ export function configCommand(program) {
         }
 
         if (options.addChannel) {
-          const { channelId, channelName } = await inquirer.prompt([
+          const { channelId, channelName } = await prompt([
             {
               type: 'input',
               name: 'channelId',
@@ -91,7 +95,7 @@ export function configCommand(program) {
             return;
           }
 
-          const { channelToRemove } = await inquirer.prompt([
+          const { channelToRemove } = await prompt([
             {
               type: 'list',
               name: 'channelToRemove',
@@ -117,7 +121,7 @@ export function configCommand(program) {
         }
 
         if (options.setProxy) {
-          const { enabled, host, port } = await inquirer.prompt([
+          const { enabled, host, port } = await prompt([
             {
               type: 'confirm',
               name: 'enabled',
@@ -227,7 +231,7 @@ export function configCommand(program) {
           return;
         }
 
-        const { action } = await inquirer.prompt([
+        const { action } = await prompt([
           {
             type: 'list',
             name: 'action',

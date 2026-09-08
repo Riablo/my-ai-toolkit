@@ -7,6 +7,7 @@ complete -c cloudsaver-cli -n "not __fish_seen_subcommand_from search s save sv 
 complete -c cloudsaver-cli -n "not __fish_seen_subcommand_from search s save sv config" -a config -d '管理配置'
 
 complete -c cloudsaver-cli -n "__fish_seen_subcommand_from search s" -l limit -r -d '限制结果数量'
+complete -c cloudsaver-cli -n "__fish_seen_subcommand_from search s" -s c -l concurrency -r -d '搜索并发数（默认 4，范围 1-16）'
 complete -c cloudsaver-cli -n "__fish_seen_subcommand_from search s" -l no-table -d '不使用表格格式输出'
 
 complete -c cloudsaver-cli -n "__fish_seen_subcommand_from save sv" -l folder -r -d '指定目标文件夹 ID'

@@ -88,6 +88,7 @@ Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/s
 
 ```bash
 myskills list                                  # 列出可用 skills
+myskills list --names                          # 仅输出名称（供脚本和补全使用）
 myskills link mosaic-notes                     # 链接到 ~/.agents/ 和 ~/.claude/（默认）
 myskills install mosaic-notes                  # 复制到 ~/.agents/ 和 ~/.claude/（默认，覆盖已有内容）
 myskills link mosaic-notes --claude             # 只链接到 ~/.claude/

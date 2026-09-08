@@ -246,6 +246,77 @@ ensure_source_target_safe() {
   esac
 }
 
+source_matches_target() {
+  local source_dir="$1" target_dir="$2" status
+  [ -d "$target_dir" ] && [ ! -L "$target_dir" ] || return 1
+  # Compare exact contents in one process, including symlink-only changes that
+  # some macOS rsync dry-run implementations do not report.
+  if python3 - "$source_dir" "$target_dir" <<'PY_COMPARE'
+import os
+import stat
+import sys
+
+
+def matching_files(source, target):
+    with open(source, "rb") as left, open(target, "rb") as right:
+        while True:
+            chunk = left.read(1024 * 1024)
+            if chunk != right.read(1024 * 1024):
+                return False
+            if not chunk:
+                return True
+
+
+def matching_directories(source, target):
+    if stat.S_IMODE(os.stat(source).st_mode) != stat.S_IMODE(os.stat(target).st_mode):
+        return False
+    with os.scandir(source) as entries:
+        source_entries = {
+            entry.name: entry for entry in entries
+            if not (entry.name == ".git" and entry.is_dir(follow_symlinks=False))
+        }
+    with os.scandir(target) as entries:
+        target_entries = {entry.name: entry for entry in entries}
+    if source_entries.keys() != target_entries.keys():
+        return False
+    for name, source_entry in source_entries.items():
+        target_entry = target_entries[name]
+        left = source_entry.stat(follow_symlinks=False)
+        right = target_entry.stat(follow_symlinks=False)
+        if stat.S_IFMT(left.st_mode) != stat.S_IFMT(right.st_mode):
+            return False
+        if stat.S_IMODE(left.st_mode) != stat.S_IMODE(right.st_mode):
+            return False
+        if stat.S_ISDIR(left.st_mode):
+            if not matching_directories(source_entry.path, target_entry.path):
+                return False
+        elif stat.S_ISLNK(left.st_mode):
+            if os.readlink(source_entry.path) != os.readlink(target_entry.path):
+                return False
+        elif stat.S_ISREG(left.st_mode):
+            if left.st_size != right.st_size or not matching_files(source_entry.path, target_entry.path):
+                return False
+        else:
+            # Let the existing staging copy handle special file types.
+            return False
+    return True
+
+
+try:
+    raise SystemExit(0 if matching_directories(sys.argv[1], sys.argv[2]) else 1)
+except OSError as exc:
+    print(f"比较目录失败: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+PY_COMPARE
+  then
+    return 0
+  else
+    status=$?
+    [ "$status" -eq 1 ] && return 1
+    die "无法比较源目录与目标目录"
+  fi
+}
+
 deploy_directory() {
   local source_dir="$1"
   local target_dir="$2"
@@ -284,7 +355,7 @@ print_main_help() {
   - 可配置 default_subdir，默认发布到某个子目录下
   - 将包含 HTML 的目录完整覆盖到目标位置
   - 不提供 source-dir 时，会交互输入目录并支持 Tab 路径补全
-  - 复制完成后自动执行 git fetch、pull、commit、push
+  - 先执行 git pull --ff-only，再按需复制、commit、push
   - 任一步 Git 失败即停止
 
 示例：
@@ -336,7 +407,7 @@ print_push_help() {
   - 若未提供 --subdir 或 --root，会优先使用配置中的 default_subdir
   - 路径优先级：--root > --subdir > default_subdir > 根目录
   - --root 和 --subdir 互斥
-  - 发布流程包含 git fetch、pull、完整覆盖目录、commit、push
+  - 发布流程包含 git pull --ff-only、按需完整覆盖目录、commit、push
 
 示例：
   testpage-cli push ./dist
@@ -503,11 +574,16 @@ cmd_push() {
   local branch
   branch="$(current_branch "$CONFIG_PROJECT_ROOT")"
 
-  info "执行 git fetch..."
-  git -C "$CONFIG_PROJECT_ROOT" fetch --all --prune
-
   info "执行 git pull --ff-only origin ${branch}..."
   git -C "$CONFIG_PROJECT_ROOT" pull --ff-only origin "$branch"
+
+  if source_matches_target "$source_dir" "$target_dir"; then
+    local encoded_rel
+    encoded_rel="$(encode_url_path "$target_rel")"
+    success "目标内容没有变化，无需提交。"
+    echo "${CONFIG_BASE_URL}${encoded_rel}/"
+    return 0
+  fi
 
   info "完整覆盖 ${target_rel} ..."
   deploy_directory "$source_dir" "$target_dir"

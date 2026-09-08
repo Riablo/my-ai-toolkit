@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import gzip
 import html
 import http.client
 import json
@@ -28,6 +27,9 @@ APP_NAME = "readlater-cli"
 DEFAULT_TIMEOUT = 10
 DEFAULT_SUMMARY_LENGTH = 280
 DEFAULT_RETRIES = 1
+MAX_DOWNLOAD_BYTES = 4 * 1024 * 1024
+MAX_DECODED_BYTES = 8 * 1024 * 1024
+MAX_BODY_TEXT_CHARS = 64 * 1024
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -191,20 +193,52 @@ def handle_from_url(url: str | None) -> str | None:
     return handle or None
 
 
-def decode_response_body(body: bytes, headers: Any) -> bytes:
+def decode_response_body(body: bytes, headers: Any, max_bytes: int = MAX_DECODED_BYTES) -> bytes:
     encoding = str(headers.get("Content-Encoding", "")).lower()
-    if "gzip" in encoding:
-        return gzip.decompress(body)
-    if "deflate" in encoding:
+    if "gzip" not in encoding and "deflate" not in encoding:
+        if len(body) > max_bytes:
+            raise CliError(f"响应正文超过 {max_bytes // 1024} KiB 限制")
+        return body
+
+    def decompress(wbits: int) -> bytes:
+        remaining = body
+        chunks = []
+        size = 0
+        while remaining:
+            decoder = zlib.decompressobj(wbits)
+            chunk = decoder.decompress(remaining, max_bytes - size + 1)
+            size += len(chunk)
+            if size > max_bytes:
+                raise CliError(f"解压后的正文超过 {max_bytes // 1024} KiB 限制")
+            if not decoder.eof:
+                # A raw-deflate stream may happen to start with a valid zlib
+                # header. An incomplete candidate must still try the raw form.
+                raise zlib.error("压缩响应不完整")
+            chunks.append(chunk)
+            # gzip permits concatenated members and trailing zero padding.
+            remaining = decoder.unused_data.lstrip(b"\x00") if "gzip" in encoding else b""
+        return b"".join(chunks)
+
+    try:
+        if "gzip" in encoding:
+            return decompress(zlib.MAX_WBITS | 16)
         try:
-            return zlib.decompress(body)
+            return decompress(zlib.MAX_WBITS)
         except zlib.error:
-            return zlib.decompress(body, -zlib.MAX_WBITS)
-    return body
+            return decompress(-zlib.MAX_WBITS)
+    except zlib.error as exc:
+        raise CliError("无法解压响应正文") from exc
 
 
-def request_bytes(url: str, timeout: int, accept: str) -> HttpResponse:
-    return request_bytes_with_retries(url, timeout, accept, retries=DEFAULT_RETRIES)
+def read_response_body(response: Any) -> bytes:
+    body = response.read(MAX_DOWNLOAD_BYTES + 1)
+    if len(body) > MAX_DOWNLOAD_BYTES:
+        raise CliError(f"响应下载超过 {MAX_DOWNLOAD_BYTES // 1024} KiB 限制")
+    return decode_response_body(body, response.headers)
+
+
+def request_bytes(url: str, timeout: int, accept: str, *, html_only: bool = False) -> HttpResponse:
+    return request_bytes_with_retries(url, timeout, accept, retries=DEFAULT_RETRIES, html_only=html_only)
 
 
 def compact_error_body(value: str) -> str | None:
@@ -257,12 +291,14 @@ def request_bytes_with_retries(
     timeout: int,
     accept: str,
     retries: int,
+    *,
+    html_only: bool = False,
 ) -> HttpResponse:
     last_error: BaseException | None = None
     for attempt in range(retries + 1):
         try:
             with urllib.request.urlopen(make_request(url, accept), timeout=timeout) as resp:
-                body = decode_response_body(resp.read(), resp.headers)
+                body = b"" if html_only and not is_probably_html(resp.headers) else read_response_body(resp)
                 return HttpResponse(
                     url=resp.geturl(),
                     status=resp.status,
@@ -270,7 +306,7 @@ def request_bytes_with_retries(
                     body=body,
                 )
         except urllib.error.HTTPError as exc:
-            body = decode_response_body(exc.read(), exc.headers)
+            body = read_response_body(exc)
             message = compact_error_body(body.decode("utf-8", errors="replace"))
             raise CliError(f"HTTP {exc.code}: {message or exc.reason}") from exc
         except urllib.error.URLError as exc:
@@ -393,8 +429,12 @@ def fetch_x_oembed(
     )
 
 
+class _MetadataComplete(Exception):
+    """Stop parsing after every output field has its highest-priority value."""
+
+
 class MetadataHTMLParser(HTMLParser):
-    def __init__(self, max_text_parts: int = 800) -> None:
+    def __init__(self, max_text_parts: int = 800, *, stop_when_complete: bool = False) -> None:
         super().__init__(convert_charrefs=True)
         self.meta: dict[str, str] = {}
         self.links: dict[str, str] = {}
@@ -404,6 +444,21 @@ class MetadataHTMLParser(HTMLParser):
         self.in_body = False
         self.skip_depth = 0
         self.max_text_parts = max_text_parts
+        self.body_text_chars = 0
+        self.stop_when_complete = stop_when_complete
+
+    def append_body(self, text: str) -> None:
+        if len(self.body_parts) >= self.max_text_parts or self.body_text_chars >= MAX_BODY_TEXT_CHARS:
+            return
+        text = text[: MAX_BODY_TEXT_CHARS - self.body_text_chars]
+        self.body_parts.append(text)
+        self.body_text_chars += len(text)
+
+    @property
+    def has_complete_metadata(self) -> bool:
+        # These are the highest-priority fields. Stop only once later tags cannot
+        # improve the output, including the optional canonical URL and site name.
+        return all(self.meta.get(key) for key in ("og:title", "og:description", "og:url", "og:site_name"))
 
     def handle_starttag(
         self, tag: str, attrs: list[tuple[str, str | None]]
@@ -429,6 +484,8 @@ class MetadataHTMLParser(HTMLParser):
             content = clean_text(attr_map.get("content"))
             if key and content and key not in self.meta:
                 self.meta[key] = content
+                if self.stop_when_complete and self.has_complete_metadata:
+                    raise _MetadataComplete
         elif tag == "link":
             rel = attr_map.get("rel", "").lower()
             href = clean_text(attr_map.get("href"))
@@ -436,7 +493,7 @@ class MetadataHTMLParser(HTMLParser):
                 self.links["canonical"] = href
 
         if tag in BLOCK_TAGS and self.in_body:
-            self.body_parts.append("\n")
+            self.append_body("\n")
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
@@ -451,7 +508,7 @@ class MetadataHTMLParser(HTMLParser):
             self.in_body = False
 
         if tag in BLOCK_TAGS and self.in_body:
-            self.body_parts.append("\n")
+            self.append_body("\n")
 
     def handle_data(self, data: str) -> None:
         if self.skip_depth:
@@ -459,8 +516,8 @@ class MetadataHTMLParser(HTMLParser):
         if self.in_title:
             self.title_parts.append(data)
             return
-        if self.in_body and len(self.body_parts) < self.max_text_parts:
-            self.body_parts.append(data)
+        if self.in_body:
+            self.append_body(data)
 
     @property
     def title(self) -> str | None:
@@ -528,7 +585,7 @@ def is_probably_html(headers: Any) -> bool:
 
 
 def fetch_generic_url(url: str, timeout: int, summary_length: int) -> ReadLaterItem:
-    response = request_bytes(url, timeout, "text/html,application/xhtml+xml,*/*;q=0.8")
+    response = request_bytes(url, timeout, "text/html,application/xhtml+xml,*/*;q=0.8", html_only=True)
 
     if not is_probably_html(response.headers):
         content_type = clean_text(str(response.headers.get("Content-Type", "")))
@@ -542,8 +599,13 @@ def fetch_generic_url(url: str, timeout: int, summary_length: int) -> ReadLaterI
         )
 
     raw_html = decode_html(response.body, response.headers)
-    parser = MetadataHTMLParser()
-    parser.feed(raw_html)
+    parser = MetadataHTMLParser(stop_when_complete=True)
+    try:
+        # One feed preserves continuous text: HTMLParser otherwise emits data
+        # at each chunk boundary, which would insert spaces into text/title.
+        parser.feed(raw_html)
+    except _MetadataComplete:
+        pass
 
     title = (
         first_meta(parser.meta, ["og:title", "twitter:title"])

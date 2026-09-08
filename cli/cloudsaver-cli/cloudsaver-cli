@@ -15,10 +15,10 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || true)"
-if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 18 ]; then
-  echo "错误：cloudsaver-cli 需要 Node.js 18+，当前版本为 $(node --version 2>/dev/null || echo unknown)。" >&2
-  exit 1
-fi
-
-exec node "$SCRIPT_DIR/cloudsaver-cli.cjs" "$@"
+exec node -e '
+  if (Number(process.versions.node.split(".")[0]) < 18) {
+    console.error("错误：cloudsaver-cli 需要 Node.js 18+，当前版本为 " + process.version + "。");
+    process.exit(1);
+  }
+  require(process.argv[1]);
+' "$SCRIPT_DIR/cloudsaver-cli.cjs" "$@"
