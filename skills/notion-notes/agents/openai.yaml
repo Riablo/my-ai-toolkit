@@ -1,0 +1,6 @@
+interface:
+  display_name: "Notion Notes"
+  short_description: "Save useful personal knowledge to Notion Notes."
+  default_prompt: "Use $notion-notes to save the useful details from this conversation to my Notes database."
+policy:
+  allow_implicit_invocation: false

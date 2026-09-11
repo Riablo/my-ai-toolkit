@@ -1,6 +1,6 @@
 # 添加已知数据库支持
 
-只有当用户明确要求“把某个已知 Notion 数据库加入 my-notion”时，才使用本文件维护 skill。日常记录任务中不要自动扩展数据库，也不要临时写入未登记的 data source。
+只有当用户明确要求“把某个已知 Notion 数据库加入 notion-logs”时，才使用本文件维护 skill。日常记录任务中不要自动扩展数据库，也不要临时写入未登记的 data source。
 
 ## 维护流程
 
@@ -9,12 +9,12 @@
 2. 读取 schema。若配置里已经有 alias，可用：
 
 ```bash
-uv run SKILL_DIR/scripts/my_notion.py schema --data-source <alias>
+uv run SKILL_DIR/scripts/notion_logs.py schema --data-source <alias>
 ```
 
 若尚未写入配置，先用 Notion 页面或 API 确认 data source id；不要猜字段名。
 
-3. 在 `scripts/my_notion.py` 的 `DEFAULT_CONFIG["data_sources"]` 中添加明确 alias，并同步更新 `references/config.md` 的配置示例：
+3. 在 `scripts/notion_logs.py` 的 `DEFAULT_CONFIG["data_sources"]` 中添加明确 alias，并同步更新 `references/config.md` 的配置示例：
 
 ```json
 {
@@ -41,9 +41,9 @@ uv run SKILL_DIR/scripts/my_notion.py schema --data-source <alias>
 8. 验证：
 
 ```bash
-python3 -m py_compile skills/my-notion/scripts/my_notion.py
-uv run --with pyyaml /Users/cz/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/my-notion
-uv run skills/my-notion/scripts/my_notion.py <new-command> --dry-run ...
+uv run python -m py_compile skills/notion-logs/scripts/notion_logs.py
+uv run --with pyyaml /Users/cz/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/notion-logs
+uv run skills/notion-logs/scripts/notion_logs.py <new-command> --dry-run ...
 ```
 
 ## Property Builder 参考

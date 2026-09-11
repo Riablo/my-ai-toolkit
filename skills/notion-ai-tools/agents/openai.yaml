@@ -1,0 +1,6 @@
+interface:
+  display_name: "Notion AI Tools"
+  short_description: "Track AI skills, MCPs, and plugins in Notion."
+  default_prompt: "Use $notion-ai-tools to add or update this tool in my AI Tools database."
+policy:
+  allow_implicit_invocation: false

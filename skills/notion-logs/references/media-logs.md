@@ -53,9 +53,9 @@
 ## 命令
 
 ```bash
-uv run SKILL_DIR/scripts/my_notion.py media --kind music --title "An Evening With Silk Sonic" --artist "Silk Sonic" --rating "⭐⭐⭐"
-uv run SKILL_DIR/scripts/my_notion.py media --kind movie --title "The Shawshank Redemption" --rating "💎"
-uv run SKILL_DIR/scripts/my_notion.py media --kind tv --title "Breaking Bad" --rating "💎💎"
+uv run SKILL_DIR/scripts/notion_logs.py media --kind music --title "An Evening With Silk Sonic" --artist "Silk Sonic" --rating "⭐⭐⭐"
+uv run SKILL_DIR/scripts/notion_logs.py media --kind movie --title "The Shawshank Redemption" --rating "💎"
+uv run SKILL_DIR/scripts/notion_logs.py media --kind tv --title "Breaking Bad" --rating "💎💎"
 ```
 
 ## 查询与编辑

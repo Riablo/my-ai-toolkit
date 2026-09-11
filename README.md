@@ -57,7 +57,9 @@ Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/s
 | [jenkins-builder-cli](skills/jenkins-builder-cli/) | 用自然语言安全调用 Jenkins 构建工具（job 查找 / 分支确认 / 测试服正式服确认 / 子代理监听构建） |
 | [mosaic-notes](skills/mosaic-notes/) | 管理 Obsidian Mosaic 知识库的笔记 |
 | [my-feishu](skills/my-feishu/) | 使用 `lark-cli` 向白名单飞书群发送消息、按用户名 @ 用户，并新建、读取或追加编辑飞书云文档 |
-| [my-notion](skills/my-notion/) | 使用 Notion API 添加或编辑已支持的个人 Notion 记录，当前内置 Music/Movie/TV Series Logs |
+| [notion-ai-tools](skills/notion-ai-tools/) | 维护 Notion AI Tools 清单，记录 Skills、MCPs、Plugins 的用途、使用状态、适用 Agent 和安装范围 |
+| [notion-logs](skills/notion-logs/) | 使用 Notion API 添加或编辑 Music/Movie/TV Series Logs 中的专辑、电影和剧集记录 |
+| [notion-notes](skills/notion-notes/) | 将值得长期保存的个人配置、踩坑、决策和笔记保存或更新到 Notion Notes，正文灵活组织 |
 | [pingcode-cli](skills/pingcode-cli/) | 使用 `pingcode-cli` 列出 PingCode bug 列表并按 ID 将缺陷状态改为已修复 |
 | [qweather-cli](skills/qweather-cli/) | 使用 `qweather-cli` 查询实时天气、每日预报、逐小时预报，并检查 QWeather 配置 |
 | [skill-retrospective](skills/skill-retrospective/) | 在创建、更新、重构或 review skill 时自动做反思检查，重点检查 description、README 化正文、gotcha、边界与渐进加载 |

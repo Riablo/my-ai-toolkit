@@ -1,0 +1,6 @@
+interface:
+  display_name: "Notion Logs"
+  short_description: "Log albums, movies, and TV series in Notion."
+  default_prompt: "Use $notion-logs to log a movie, album, or TV series into Notion."
+policy:
+  allow_implicit_invocation: false

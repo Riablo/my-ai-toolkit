@@ -1,9 +1,9 @@
-# My Notion 配置
+# Notion Logs 配置
 
 配置文件固定为：
 
 ```text
-~/.config/my-notion/config.json
+~/.config/notion-logs/config.json
 ```
 
 最小配置示例：
@@ -74,8 +74,8 @@ export NOTION_API_KEY="<notion-token>"
 如果用户没有配置文件：
 
 ```bash
-mkdir -p ~/.config/my-notion
-uv run SKILL_DIR/scripts/my_notion.py config-template > ~/.config/my-notion/config.json
+mkdir -p ~/.config/notion-logs
+uv run SKILL_DIR/scripts/notion_logs.py config-template > ~/.config/notion-logs/config.json
 ```
 
 然后让用户把 `notion_token` 或环境变量补上，并确认对应数据库已经分享给 Notion integration。
