@@ -49,6 +49,7 @@ Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/s
 
 | Skill | 说明 |
 | --- | --- |
+| [alfred-paper-icon](skills/alfred-paper-icon/) | 生成层叠纸片风格的 Alfred Workflow 图标，保持材质、层次与光照统一，配色随主题变化；附参考图和透明通道检查 |
 | [cli-skill-creator](skills/cli-skill-creator/) | 为 `cli/` 下的命令行工具生成 AI skill（先探测 help/README/配置，再写轻量 skill） |
 | [cloudsaver-cli](skills/cloudsaver-cli/) | 使用 `cloudsaver-cli` 搜索网盘资源、检查配置并转存 115 分享链接 |
 | [defuddle](skills/defuddle/) | 使用 `npx defuddle` 获取 URL 或本地 HTML 的正文，并转换为 Markdown 文档 |

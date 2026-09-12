@@ -1,0 +1,6 @@
+interface:
+  display_name: "Alfred 层叠纸片图标"
+  short_description: "生成层叠纸片风格的 Alfred 图标，保持材质与层次统一，配色随主题变化"
+  default_prompt: "使用 $alfred-paper-icon 为我的 Alfred Workflow 生成层叠纸片风格图标，根据功能选择配色，并保存透明 PNG 和提示词。"
+policy:
+  allow_implicit_invocation: false
