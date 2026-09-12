@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if (( BASH_VERSINFO[0] < 5 )); then
+  echo '错误：cos-cli 需要 Bash 5.0+；macOS 可运行 brew install bash。' >&2
+  exit 1
+fi
+
+SELF="${BASH_SOURCE[0]}"
+while [[ -L "$SELF" ]]; do
+  SELF_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+  SELF="$(readlink "$SELF")"
+  if [[ "$SELF" != /* ]]; then
+    SELF="$SELF_DIR/$SELF"
+  fi
+done
+SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo '错误：未找到 uv，请先安装 uv（macOS：brew install uv）。' >&2
+  exit 1
+fi
+
+exec uv run --script "$SCRIPT_DIR/main.py" "$@"

@@ -1,0 +1,39 @@
+#compdef cos-cli
+
+_cos-cli() {
+  local context state state_descr line
+  typeset -A opt_args
+
+  _arguments -C \
+    '--config[配置文件路径]:配置文件:_files' \
+    '(-h --help)'{-h,--help}'[显示帮助]' \
+    '(-p --prefix)'{-p,--prefix}'[对象路径前缀]:前缀:' \
+    '(--no-md5)--md5[文件名加入内容 MD5]' \
+    '(--md5)--no-md5[不使用 MD5 重命名]' \
+    '--all-files[包含非图片文件]' \
+    '--dry-run[预览 Key 和 URL，不上传]' \
+    '(--json)--format[输出格式]:格式:(url key markdown json)' \
+    '(--format)--json[输出 JSON]' \
+    '1:图片、文件夹或命令:->first' \
+    '*:图片、文件夹或配置操作:->rest'
+
+  case "$state" in
+    first)
+      local -a commands=('upload:上传图片或文件夹' 'config:管理配置')
+      _describe '命令' commands
+      _files
+      ;;
+    rest)
+      if [[ "${line[1]}" == config ]]; then
+        if (( ${#line} <= 2 )); then
+          local -a actions=('init:创建配置模板' 'check:本地校验配置' 'show:脱敏查看配置' 'path:显示配置路径')
+          _describe '配置操作' actions
+        fi
+      else
+        _files
+      fi
+      ;;
+  esac
+}
+
+_cos-cli "$@"
