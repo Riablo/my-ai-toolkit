@@ -316,13 +316,13 @@ ${BOLD}目标参数（link / install / unlink / uninstall 可用，可多选）�
 ${BOLD}示例：${RESET}
   myskills list
   myskills list --names                       # 纯名称输出，供脚本与补全使用
-  myskills link mosaic-notes                   # 链接到 ~/.agents/ 和 ~/.claude/
-  myskills install mosaic-notes                # 复制到 ~/.agents/ 和 ~/.claude/
-  myskills link mosaic-notes --claude           # 只链接到 ~/.claude/
-  myskills install mosaic-notes --local-agents  # 覆盖安装到当前目录的 .agents
-  myskills link mosaic-notes --agents --local-claude
-  myskills unlink mosaic-notes
-  myskills uninstall mosaic-notes
+  myskills link notion-notes                   # 链接到 ~/.agents/ 和 ~/.claude/
+  myskills install notion-notes                # 复制到 ~/.agents/ 和 ~/.claude/
+  myskills link notion-notes --claude           # 只链接到 ~/.claude/
+  myskills install notion-notes --local-agents  # 覆盖安装到当前目录的 .agents
+  myskills link notion-notes --agents --local-claude
+  myskills unlink notion-notes
+  myskills uninstall notion-notes
   myskills status"
 }
 
@@ -337,8 +337,8 @@ ${BOLD}说明：${RESET}
   不指定时默认链接到 --agents 和 --claude。
 
 ${BOLD}示例：${RESET}
-  myskills link mosaic-notes
-  myskills link mosaic-notes --claude --local-agents"
+  myskills link notion-notes
+  myskills link notion-notes --claude --local-agents"
 }
 
 usage_install() {
@@ -353,8 +353,8 @@ ${BOLD}说明：${RESET}
   不指定时默认安装到 --agents 和 --claude。
 
 ${BOLD}示例：${RESET}
-  myskills install mosaic-notes
-  myskills install mosaic-notes --claude --local-agents"
+  myskills install notion-notes
+  myskills install notion-notes --claude --local-agents"
 }
 
 usage_unlink() {
@@ -367,8 +367,8 @@ ${BOLD}说明：${RESET}
   移除指定 skill 的软链接。可指定目标，不指定时扫描所有位置。
 
 ${BOLD}示例：${RESET}
-  myskills unlink mosaic-notes
-  myskills unlink mosaic-notes --claude"
+  myskills unlink notion-notes
+  myskills unlink notion-notes --claude"
 }
 
 usage_uninstall() {
@@ -383,8 +383,8 @@ ${BOLD}说明：${RESET}
   仅删除普通目录，不会移除软链接。
 
 ${BOLD}示例：${RESET}
-  myskills uninstall mosaic-notes
-  myskills uninstall mosaic-notes --local-agents"
+  myskills uninstall notion-notes
+  myskills uninstall notion-notes --local-agents"
 }
 
 # ─── 主入口 ──────────────────────────────────────────────────────

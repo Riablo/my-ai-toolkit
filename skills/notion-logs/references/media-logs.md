@@ -1,6 +1,6 @@
 # Media Logs
 
-本 workflow 把 Mosaic Obsidian 的 Music/Movie/TV metadata 流程改成 Notion database page add/update。
+本工作流获取专辑、电影和剧集的元数据，并在对应 Notion 数据库中新增或更新记录。
 
 ## 数据源
 

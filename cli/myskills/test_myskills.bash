@@ -37,7 +37,9 @@ ln -s "$tmp_dir/skills/space skill" '.agents/skills/space skill'
 test "$("$tool" list --names)" = $'alpha\nlong\nmissing\nspace skill\nutf8\nwithout'
 status_output="$("$tool" status)"
 [[ "$status_output" == *"./.agents/skills/space skill → $tmp_dir/skills/space skill"* ]]
-"$tool" --help | grep -q -- 'list \[--names\]'
+# 先完整读取帮助，避免 grep -q 提前关闭管道导致工具收到 SIGPIPE。
+help_output="$("$tool" --help)"
+[[ "$help_output" == *'list [--names]'* ]]
 
 if command -v fish >/dev/null 2>&1; then
   fish --no-config -c '

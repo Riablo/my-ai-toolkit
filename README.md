@@ -47,27 +47,17 @@ Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/s
 
 仓库中的 skill 默认只允许用户显式调用，不由 Agent 自动选择：`SKILL.md` 使用 `disable-model-invocation: true`，兼容 Claude Code 和 Pi；`agents/openai.yaml` 使用 `policy.allow_implicit_invocation: false`，兼容 Codex。以后新增 skill 也遵循这一默认项，只有明确需要自动调用时才同时调整两处配置。
 
+Skills 用于承载可复用的工作流和任务约定。简单 CLI 直接查阅工具的帮助或 README 使用，不单独维护只转述命令用法的 skill。
+
 | Skill | 说明 |
 | --- | --- |
 | [alfred-paper-icon](skills/alfred-paper-icon/) | 生成层叠纸片风格的 Alfred Workflow 图标，保持材质、层次与光照统一，配色随主题变化；附参考图和透明通道检查 |
-| [cli-skill-creator](skills/cli-skill-creator/) | 为 `cli/` 下的命令行工具生成 AI skill（先探测 help/README/配置，再写轻量 skill） |
-| [cloudsaver-cli](skills/cloudsaver-cli/) | 使用 `cloudsaver-cli` 搜索网盘资源、检查配置并转存 115 分享链接 |
-| [defuddle](skills/defuddle/) | 使用 `npx defuddle` 获取 URL 或本地 HTML 的正文，并转换为 Markdown 文档 |
-| [freecurrency-cli](skills/freecurrency-cli/) | 使用 `freecurrency-cli` 查询汇率、做金额换算，并检查配置与缓存 |
 | [image-prompt-tester](skills/image-prompt-tester/) | 生图测试：按指定方向测试图片提示词，或从参考图提取风格生成占位符模板，并行出图后保存到 `~/Downloads` |
-| [jenkins-builder-cli](skills/jenkins-builder-cli/) | 用自然语言安全调用 Jenkins 构建工具（job 查找 / 分支确认 / 测试服正式服确认 / 子代理监听构建） |
-| [mosaic-notes](skills/mosaic-notes/) | 管理 Obsidian Mosaic 知识库的笔记 |
-| [my-feishu](skills/my-feishu/) | 使用 `lark-cli` 向白名单飞书群发送消息、按用户名 @ 用户，并新建、读取或追加编辑飞书云文档 |
 | [notion-ai-tools](skills/notion-ai-tools/) | 维护 Notion AI Tools 清单，记录 Skills、MCPs、Plugins 的用途、使用状态、适用 Agent 和安装范围 |
 | [notion-logs](skills/notion-logs/) | 使用 Notion API 添加或编辑 Music/Movie/TV Series Logs 中的专辑、电影和剧集记录 |
 | [notion-notes](skills/notion-notes/) | 将值得长期保存的个人配置、踩坑、决策和笔记保存或更新到 Notion Notes，正文灵活组织 |
-| [pingcode-cli](skills/pingcode-cli/) | 使用 `pingcode-cli` 列出 PingCode bug 列表并按 ID 将缺陷状态改为已修复 |
-| [qweather-cli](skills/qweather-cli/) | 使用 `qweather-cli` 查询实时天气、每日预报、逐小时预报，并检查 QWeather 配置 |
 | [skill-retrospective](skills/skill-retrospective/) | 在创建、更新、重构或 review skill 时自动做反思检查，重点检查 description、README 化正文、gotcha、边界与渐进加载 |
-| [testpage-cli](skills/testpage-cli/) | 使用 `testpage-cli` 发布本地 HTML 目录到测试服务器对应的 Git 项目，并返回可访问 URL |
 | [web-app-dockerizer](skills/web-app-dockerizer/) | 把本地 Web App 从 Bun/npm/pnpm/yarn 或旧常驻进程迁移为 Docker Compose 长期运行 |
-| [wt-land](skills/wt-land/) | 使用 `wt-land` 将当前 worktree 的功能分支线性落到另一个本地 worktree 分支 |
-| [yun720](skills/yun720/) | 使用 `yun720` 上传全景素材、查询制作状态、创建 720 云漫游作品；支持先生成 2:1 全景图再创建作品 |
 
 ## cli/
 
@@ -93,13 +83,13 @@ Claude Code 的 [Custom Skills](https://docs.anthropic.com/en/docs/claude-code/s
 ```bash
 myskills list                                  # 列出可用 skills
 myskills list --names                          # 仅输出名称（供脚本和补全使用）
-myskills link mosaic-notes                     # 链接到 ~/.agents/ 和 ~/.claude/（默认）
-myskills install mosaic-notes                  # 复制到 ~/.agents/ 和 ~/.claude/（默认，覆盖已有内容）
-myskills link mosaic-notes --claude             # 只链接到 ~/.claude/
-myskills install mosaic-notes --local-agents    # 覆盖安装到当前目录的 .agents
-myskills link mosaic-notes --agents --local-claude  # 多选目标
-myskills unlink mosaic-notes                   # 移除所有位置的软链接
-myskills uninstall mosaic-notes                # 移除所有位置已复制安装的目录
+myskills link notion-notes                     # 链接到 ~/.agents/ 和 ~/.claude/（默认）
+myskills install notion-notes                  # 复制到 ~/.agents/ 和 ~/.claude/（默认，覆盖已有内容）
+myskills link notion-notes --claude             # 只链接到 ~/.claude/
+myskills install notion-notes --local-agents    # 覆盖安装到当前目录的 .agents
+myskills link notion-notes --agents --local-claude  # 多选目标
+myskills unlink notion-notes                   # 移除所有位置的软链接
+myskills uninstall notion-notes                # 移除所有位置已复制安装的目录
 myskills status                                # 查看状态（软链接或已安装）
 ```
 

@@ -38,13 +38,17 @@ uv run SKILL_DIR/scripts/notion_logs.py schema --data-source <alias>
 
 7. 更新 `README.md` 的 skill 说明；若用户要求，也更新 `agents/openai.yaml` 的默认提示。
 
-8. 验证：
+8. 验证。`SKILL_DIR` 为正在维护的 skill 目录；从当前环境的 skill 列表定位 `skill-creator`，将其实际目录记为 `SKILL_CREATOR_DIR`，不要写死某台机器的路径：
 
 ```bash
-uv run python -m py_compile skills/notion-logs/scripts/notion_logs.py
-uv run --with pyyaml /Users/cz/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/notion-logs
-uv run skills/notion-logs/scripts/notion_logs.py <new-command> --dry-run ...
+uv run python -m py_compile "<SKILL_DIR>/scripts/notion_logs.py"
+uv run --with pyyaml "<SKILL_CREATOR_DIR>/scripts/quick_validate.py" "<SKILL_DIR>"
+uv run "<SKILL_DIR>/scripts/notion_logs.py" <new-command> --dry-run ...
 ```
+
+若验证器不可用，明确报告该项未运行并协助定位或安装，不把缺失当作通过。检查 dry-run 中的目标、必填字段和不可写字段；dry-run 通过不代表真实写入成功，也不构成真实写入的授权。
+
+部分旧版 `quick_validate.py` 不识别 `disable-model-invocation`。保留原文件中的字段，先独立检查它是布尔值且与 `agents/openai.yaml` 的调用策略一致，再用仅去掉该字段的临时副本运行其余校验，并报告此兼容处理；其他错误仍按验证失败处理。
 
 ## Property Builder 参考
 
