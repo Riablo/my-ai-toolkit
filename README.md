@@ -76,7 +76,7 @@ Skills 用于承载可复用的工作流和任务约定。简单 CLI 直接查�
 | [jenkins-builder-cli](cli/jenkins-builder-cli/) | Jenkins 构建命令行工具（实时 jobs / 标签与别称 / 触发构建 / 改分支 / 日志 / 停止） |
 | [cos-cli](cli/cos-cli/) | 上传图片或文件夹到腾讯云 COS（配置文件 / MD5 命名 / 自定义前缀 / 预览 / URL 与 JSON 输出） |
 | [testpage-cli](cli/testpage-cli/) | 测试 HTML 页面快速发布工具（同步目录 / 覆盖目标 / Git 提交并推送 / 返回访问 URL） |
-| [wt-land](cli/wt-land/) | 将当前功能分支 rebase 后 fast-forward 到目标 worktree 分支，保持提交历史线性 |
+| [wt-land](cli/wt-land/) | 将当前功能分支 rebase 后 fast-forward 到本地目标分支，支持同目录和多 worktree |
 
 ### myskills 用法
 
