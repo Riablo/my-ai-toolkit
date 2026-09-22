@@ -10,47 +10,23 @@ _pingcode_projects() {
   [[ -r "$file" ]] && jq -r '.projects[]?.name' "$file" 2>/dev/null
 }
 
-_pingcode_states() {
-  local file project="" index
-  file="$(_pingcode_config_file)"
-  for (( index = 2; index <= ${#words}; index++ )); do
-    case "${words[index]}" in
-      --project)
-        project="${words[index + 1]:-}"
-        ;;
-      --project=*)
-        project="${words[index]#*=}"
-        ;;
-    esac
-  done
-  if [[ -r "$file" && -n "$project" ]]; then
-    jq -r --arg project "$project" '[.projects[]? | select(.name == $project) | .states[]?.name] | unique[]' "$file" 2>/dev/null
-  elif [[ -r "$file" ]]; then
-    jq -r '[.projects[]?.states[]?.name] | unique[]' "$file" 2>/dev/null
-  fi
-}
-
 _pingcode_complete_projects() {
   local -a projects
   projects=("${(@f)$(_pingcode_projects)}")
   compadd -a projects
 }
 
-_pingcode_complete_states() {
-  local -a states
-  states=("${(@f)$(_pingcode_states)}")
-  compadd -a states
-}
-
 _pingcode-cli() {
   local command="$words[2]"
   local -a commands
   commands=(
-    'init:初始化配置'
+    'config:管理配置'
     'auth:获取或刷新用户令牌'
+    'doctor:检查运行环境与 API'
     'projects:查看或刷新项目缓存'
     'bugs:获取 bug 列表'
     'bug:获取一个 bug'
+    'comments:获取 bug 评论'
     'set-state:修改 bug 状态'
   )
 
@@ -62,7 +38,11 @@ _pingcode-cli() {
   shift words
   (( CURRENT-- ))
   case "$command" in
-    init|auth)
+    config)
+      _arguments '(-h --help)'{-h,--help}'[显示帮助]' \
+        '1:子命令:(init show path set-created-after)' '2:日期（YYYY-MM-DD）:'
+      ;;
+    auth|doctor)
       _arguments '(-h --help)'{-h,--help}'[显示帮助]'
       ;;
     projects)
@@ -72,14 +52,14 @@ _pingcode-cli() {
       _arguments \
         '(-h --help)'{-h,--help}'[显示帮助]' \
         '--project[项目名称]:项目名称:_pingcode_complete_projects' \
-        '*--state[状态名称，可重复]:状态名称:_pingcode_complete_states' \
         '--created-after[覆盖全局 created_at 起点]:Unix 秒数:'
       ;;
-    bug)
+    bug|comments)
       _arguments '(-h --help)'{-h,--help}'[显示帮助]' '1:bug id:'
       ;;
     set-state)
-      _arguments '(-h --help)'{-h,--help}'[显示帮助]' '1:bug id:' '2:状态名称:_pingcode_complete_states'
+      _arguments '(-h --help)'{-h,--help}'[显示帮助]' '1:bug id:' \
+        '--state[目标状态，省略时交互选择]:状态名称:(已拒绝 重新打开 已修复 新提交 挂起 已发布 处理中)'
       ;;
   esac
 }

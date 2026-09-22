@@ -69,7 +69,7 @@ Skills 用于承载可复用的工作流和任务约定。简单 CLI 直接查�
 | [freecurrency-cli](cli/freecurrency-cli/) | Open Exchange Rates 汇率工具（金额换算 / 最新汇率 / 本地缓存） |
 | [myskills](cli/myskills/) | 管理 AI Skills 的链接、安装与卸载（list / link / install / unlink / uninstall / status） |
 | [pano-json](cli/pano-json/) | 下载 720 云作品源码中 `window.json` 指向的原始 JSON |
-| [pingcode-cli](cli/pingcode-cli/) | 使用 PingCode 官方 API 查询与更新 bugs |
+| [pingcode-cli](cli/pingcode-cli/) | 使用 PingCode 官方 API 查询与更新 bugs、查看评论及诊断配置 |
 | [qweather-cli](cli/qweather-cli/) | QWeather 命令行工具（实时天气 / 每日预报 / 逐小时预报） |
 | [readlater-cli](cli/readlater-cli/) | 极简 read-it-later 抓取工具（URL 标题 / 简单概要 / JSON 输出，X/Twitter 优先走 oEmbed） |
 | [skill-auto](cli/skill-auto/) | 同步开启或关闭 Skill 的模型自动调用与默认上下文注入 |

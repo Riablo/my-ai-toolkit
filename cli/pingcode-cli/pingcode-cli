@@ -2,6 +2,15 @@
 set -euo pipefail
 
 API_BASE="https://open.pingcode.com"
+BUG_STATES=(
+  '已拒绝:5f3a1c2fc2742c0e3b7dcbd0'
+  '重新打开:5f3a1c2fc2742c17f27dcbce'
+  '已修复:5f3a1c2fc2742c20e17dcbcd'
+  '新提交:5f3a1c2fc2742c538a7dcbcb'
+  '挂起:5f3a1c2fc2742c5fc47dcbd1'
+  '已发布:5f3a1c2fc2742cacfb7dcbcf'
+  '处理中:5f3a1c2fc2742cef1d7dcbcc'
+)
 CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/pingcode-cli"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 RUNTIME_DIR=""
@@ -22,6 +31,7 @@ need_arg() {
 }
 
 require_commands() {
+  (( BASH_VERSINFO[0] >= 5 )) || die "需要 Bash 5.0+"
   local command
   for command in curl jq; do
     command -v "$command" >/dev/null 2>&1 || die "缺少依赖：${command}"
@@ -36,10 +46,10 @@ validate_timestamp() {
 # The small NUL-delimited snapshot is shared by command substitutions. Token
 # refreshes atomically replace it, so later requests also see refreshed fields.
 load_config_fields() {
-  [ -f "$CONFIG_FILE" ] || die "尚未初始化。请先运行 pingcode-cli init"
+  [ -f "$CONFIG_FILE" ] || die "尚未初始化。请先运行 pingcode-cli config init"
   local snapshot
   snapshot="$(mktemp "$RUNTIME_DIR/auth.XXXXXX")"
-  jq -j '
+  jq -ej '
     if type != "object" then error("配置必须是 JSON 对象") else . end |
     ["client_id", "client_secret", "my_assignee_id"] as $keys |
     [. as $config | $keys[] | select($config[.] | type != "string" or length == 0)] as $missing |
@@ -47,6 +57,10 @@ load_config_fields() {
     if (.created_after == null) or
       ((.created_after | type) == "number" and .created_after >= 0 and .created_after == (.created_after | floor))
     then . else error("配置字段 created_after 必须是 null 或 Unix 秒数") end |
+    if all(.access_token, .refresh_token; . == null or type == "string") and
+      all(.expires_in, .token_obtained_at; . == null or
+        (type == "number" and . >= 0 and . == floor))
+    then . else error("配置中的令牌字段格式无效") end |
     if (.projects // [] | type) == "array" then . else error("配置字段 projects 必须是数组") end |
     (.client_id, .client_secret, .my_assignee_id, (.created_after | tojson),
       (.access_token // ""), (.refresh_token // ""), (.expires_in // 0), (.token_obtained_at // 0)) |
@@ -85,7 +99,7 @@ write_config() {
 }
 
 cmd_init() {
-  [ "$#" -eq 0 ] || die "init 不接受参数"
+  [ "$#" -eq 0 ] || die "config init 不接受参数"
   local client_id client_secret my_assignee_id set_created_after created_after=""
   IFS= read -r -p 'client_id: ' client_id
   IFS= read -r -s -p 'client_secret: ' client_secret
@@ -126,6 +140,40 @@ cmd_init() {
   chmod 600 "$tmp"
   mv -f "$tmp" "$CONFIG_FILE"
   printf '配置已保存到 %s\n' "$CONFIG_FILE" >&2
+}
+
+cmd_config() {
+  local subcommand="${1:-show}" converted timestamp
+  [ "$#" -eq 0 ] || shift
+  case "$subcommand" in
+    path)
+      [ "$#" -eq 0 ] || die "config path 不接受参数"
+      printf '%s\n' "$CONFIG_FILE"
+      ;;
+    init) require_commands; cmd_init "$@" ;;
+    show)
+      [ "$#" -eq 0 ] || die "config show 不接受参数"
+      require_commands
+      validate_config
+      jq '(.client_secret, .access_token, .refresh_token) |=
+        (if . == null or . == "" then . else "***" end)' "$CONFIG_FILE"
+      ;;
+    set-created-after)
+      [ "$#" -eq 1 ] || die "用法：pingcode-cli config set-created-after YYYY-MM-DD"
+      [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "日期格式必须是 YYYY-MM-DD"
+      require_commands
+      command -v date >/dev/null 2>&1 || die "缺少依赖：date"
+      validate_config
+      converted="$(date -j -f '%Y-%m-%d %H:%M:%S' "$1 00:00:00" '+%s %Y-%m-%d' 2>/dev/null ||
+        date -d "$1 00:00:00" '+%s %Y-%m-%d' 2>/dev/null)" || die "无效日期：$1"
+      [ "${converted#* }" = "$1" ] || die "无效日期：$1"
+      timestamp="${converted%% *}"
+      validate_timestamp "$timestamp"
+      write_config '.created_after = $timestamp' --argjson timestamp "$timestamp"
+      printf 'created_after 已设置为 %s（%s，本机时区零点）\n' "$timestamp" "$1" >&2
+      ;;
+    *) die "未知 config 子命令：${subcommand}" ;;
+  esac
 }
 
 HTTP_STATUS=""
@@ -315,28 +363,13 @@ fetch_projects() {
 
 cmd_projects_refresh() {
   validate_config
-  local raw_projects projects_file project project_id project_name response
-  raw_projects="$(mktemp "$RUNTIME_DIR/projects-raw.XXXXXX")"
+  local projects_file
   projects_file="$(mktemp "$RUNTIME_DIR/projects.XXXXXX")"
-  fetch_projects > "$raw_projects"
-  while IFS= read -r project; do
-    project_id="$(jq -r '.id' <<< "$project")"
-    project_name="$(jq -r '.name' <<< "$project")"
-    response="$(api_request GET '/v1/project/work_item/states' --get \
-      --data-urlencode "project_id=${project_id}" \
-      --data-urlencode 'work_item_type_id=bug' \
-      --data-urlencode 'page_index=0' \
-      --data-urlencode 'page_size=100')"
-    jq -c --arg id "$project_id" --arg name "$project_name" '
-      if (.values | type) != "array" then error("状态响应缺少 values 数组") else . end |
-      {id: $id, name: $name, states: [.values[] |
-        select((.id | type) == "string" and (.name | type) == "string") | {id, name}] | unique_by(.id)}
-    ' <<< "$response" >> "$projects_file" || die "项目 ${project_name} 的状态响应无效"
-  done < <(jq -c '.[]' "$raw_projects")
+  fetch_projects | jq '[.[] | {id, name}]' > "$projects_file"
 
-  write_config '.projects = $projects | .projects_refreshed_at = $refreshed_at' \
+  write_config '.projects = $projects[0] | .projects_refreshed_at = $refreshed_at' \
     --slurpfile projects "$projects_file" --argjson refreshed_at "$EPOCHSECONDS"
-  printf '已缓存 %s 个项目及其 bug 状态。\n' "$(jq -s 'length' "$projects_file")" >&2
+  printf '已缓存 %s 个项目。\n' "$(jq 'length' "$projects_file")" >&2
 }
 
 projects_cache_is_valid() {
@@ -345,9 +378,7 @@ projects_cache_is_valid() {
     (.projects | type == "array") and
     all(.projects[];
       (.id | type == "string" and length > 0) and
-      (.name | type == "string" and length > 0) and
-      (.states | type == "array") and
-      all(.states[]; (.id | type == "string" and length > 0) and (.name | type == "string" and length > 0))
+      (.name | type == "string" and length > 0)
     )
   ' "$CONFIG_FILE" >/dev/null 2>&1
 }
@@ -368,7 +399,7 @@ cmd_projects() {
     refresh) cmd_projects_refresh ;;
     *) die "未知 projects 子命令：${subcommand}" ;;
   esac
-  jq '[.projects[] | {id, name, states}]' "$CONFIG_FILE"
+  jq '[.projects[] | {id, name}]' "$CONFIG_FILE"
 }
 
 resolve_project() {
@@ -382,18 +413,22 @@ resolve_project() {
 }
 
 resolve_state_id() {
-  local project="$1" name="$2" ids count
-  ids="$(jq --arg name "$name" '[.states[] | select(.name == $name) | .id] | unique' <<< "$project")"
-  count="$(jq 'length' <<< "$ids")"
-  [ "$count" -gt 0 ] || return 1
-  [ "$count" -eq 1 ] || die "项目内存在多个同名状态：${name}"
-  jq -r '.[0]' <<< "$ids"
+  local state
+  for state in "${BUG_STATES[@]}"; do
+    if [ "${state%%:*}" = "$1" ]; then
+      printf '%s\n' "${state#*:}"
+      return
+    fi
+  done
+  die "不支持的状态：$1。使用 pingcode-cli set-state --help 查看可选状态"
 }
 
 fetch_work_items() {
   local project_id="$1" state_id="$2" assignee_id="$3"
+  local -a project_filter=()
+  [ -z "$project_id" ] || project_filter=(--data-urlencode "project_id=${project_id}")
   fetch_paginated '/v1/project/work_items' work_items 工作项列表 \
-    --data-urlencode "project_id=${project_id}" \
+    "${project_filter[@]}" \
     --data-urlencode "assignee_id=${assignee_id}" \
     --data-urlencode "state_id=${state_id}" \
     --data-urlencode 'type_id=bug' \
@@ -423,17 +458,23 @@ add_image_access_tokens() {
 
 shape_bugs() {
   local cutoff="$1"
-  add_image_access_tokens | jq --arg cutoff "$cutoff" '
+  jq --arg cutoff "$cutoff" '
     ($cutoff | if . == "null" then null else tonumber end) as $created_after |
+    [.[] |
+      select(.is_archived != 1 and .is_deleted != 1) |
+      select($created_after == null or (.created_at // 0) > $created_after)]
+  ' | add_image_access_tokens | jq '
     [
       .[] |
-      select($created_after == null or (.created_at // 0) > $created_after) |
       {
         id: (.id // ""),
         identifier: (.identifier // ""),
         title: (.title // ""),
         html_url: (.html_url // ""),
-        state: (.state // null),
+        state: (.state.name // ""),
+        project: (.project.name // ""),
+        assignee: (.assignee.display_name // ""),
+        created_by: (.created_by.display_name // ""),
         description: (.description // "")
       }
     ] | sort_by(.identifier)
@@ -441,19 +482,11 @@ shape_bugs() {
 }
 
 shape_bug() {
-  add_image_access_tokens | jq '{
-    id: (.id // ""),
-    identifier: (.identifier // ""),
-    title: (.title // ""),
-    html_url: (.html_url // ""),
-    state: (.state // null),
-    description: (.description // "")
-  }'
+  jq -e '[.]' | shape_bugs null | jq '.[0] // null'
 }
 
 cmd_bugs() {
-  local project_name="" cutoff="" state_name project project_id assignee_id state_id batches_file
-  local -a state_names=() state_ids=()
+  local project_name="" cutoff="" project_id="" state_name batches_file
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --project)
@@ -461,13 +494,11 @@ cmd_bugs() {
         project_name="$2"
         shift 2
         ;;
-      --project=*) project_name="${1#*=}"; shift ;;
-      --state)
-        need_arg "$1" "${2:-}"
-        state_names+=("$2")
-        shift 2
+      --project=*)
+        project_name="${1#*=}"
+        [ -n "$project_name" ] || die "--project 需要参数"
+        shift
         ;;
-      --state=*) state_names+=("${1#*=}"); shift ;;
       --created-after)
         need_arg "$1" "${2:-}"
         cutoff="$2"
@@ -481,35 +512,23 @@ cmd_bugs() {
       *) die "未知 bugs 选项：$1" ;;
     esac
   done
-  [ -n "$project_name" ] || die "bugs 需要 --project <项目名称>"
   [ -z "$cutoff" ] || validate_timestamp "$cutoff"
 
   validate_config
-  project="$(resolve_project "$project_name")"
-  project_id="$(jq -r '.id' <<< "$project")"
-  assignee_id="$MY_ASSIGNEE_ID"
-  if [ "${#state_names[@]}" -eq 0 ]; then
-    readarray -t state_ids < <(jq -r '.states[].id' <<< "$project")
-  else
-    for state_name in "${state_names[@]}"; do
-      state_id="$(resolve_state_id "$project" "$state_name")" ||
-        die "项目 ${project_name} 没有状态：${state_name}"
-      state_ids+=("$state_id")
-    done
+  if [ -n "$project_name" ]; then
+    project_id="$(resolve_project "$project_name" | jq -r '.id')"
   fi
-  [ "${#state_ids[@]}" -gt 0 ] || die "项目 ${project_name} 没有缓存任何 bug 状态，请运行 pingcode-cli projects refresh"
 
-  readarray -t state_ids < <(printf '%s\n' "${state_ids[@]}" | awk '!seen[$0]++')
   batches_file="$(mktemp "$RUNTIME_DIR/batches.XXXXXX")"
-  for state_id in "${state_ids[@]}"; do
-    fetch_work_items "$project_id" "$state_id" "$assignee_id" >> "$batches_file"
+  for state_name in 新提交 重新打开; do
+    fetch_work_items "$project_id" "$(resolve_state_id "$state_name")" "$MY_ASSIGNEE_ID" >> "$batches_file"
   done
 
   if [ -z "$cutoff" ]; then
     cutoff="$CREATED_AFTER"
   fi
   [ "$cutoff" = "null" ] || cutoff="${cutoff:-null}"
-  jq -s 'add | unique_by(.id)' "$batches_file" | shape_bugs "$cutoff"
+  jq -s 'add // [] | unique_by(.id)' "$batches_file" | shape_bugs "$cutoff"
 }
 
 get_bug() {
@@ -520,28 +539,66 @@ get_bug() {
 
 cmd_bug() {
   [ "$#" -eq 1 ] || die "用法：pingcode-cli bug <bug_id>"
-  get_bug "$1" | shape_bug
+  local bug_file comments_file
+  bug_file="$(mktemp "$RUNTIME_DIR/bug.XXXXXX")"
+  comments_file="$(mktemp "$RUNTIME_DIR/comments.XXXXXX")"
+  get_bug "$1" | shape_bug > "$bug_file"
+  if [ "$(<"$bug_file")" = null ]; then
+    printf 'null\n'
+    return
+  fi
+  cmd_comments "$1" > "$comments_file"
+  jq --slurpfile comments "$comments_file" '. + {comments: $comments[0]}' "$bug_file"
+}
+
+cmd_comments() {
+  [ "$#" -eq 1 ] || die "用法：pingcode-cli comments <bug_id>"
+  [[ "$1" =~ ^[A-Za-z0-9_-]+$ ]] || die "无效的 bug id：$1"
+  # ponytail: 只取第一页；评论超过一页时再接入 fetch_paginated。
+  api_request GET '/v1/comments' --get \
+    --data-urlencode 'principal_type=workitem' --data-urlencode "principal_id=$1" \
+    --data-urlencode 'page_index=0' --data-urlencode 'page_size=30' |
+    jq -e 'if (.values | type) != "array" then error("评论响应缺少 values 数组") else . end |
+      [.values[] | select(.is_deleted != 1) | {id, content, created_by: (.created_by.display_name // "")}]'
 }
 
 cmd_set_state() {
-  [ "$#" -eq 2 ] || die "用法：pingcode-cli set-state <bug_id> <状态名称>"
-  local bug_id="$1" state_name="$2" bug project_id project state_id response
-  bug="$(get_bug "$bug_id")"
-  project_id="$(jq -r '.project.id // empty' <<< "$bug")"
-  [ -n "$project_id" ] || die "工作项响应缺少 project.id"
-  ensure_projects
-  project="$(jq -c --arg id "$project_id" '.projects[] | select(.id == $id)' "$CONFIG_FILE" | head -1)"
-  if [ -z "$project" ]; then
-    cmd_projects_refresh >/dev/null
-    project="$(jq -c --arg id "$project_id" '.projects[] | select(.id == $id)' "$CONFIG_FILE" | head -1)"
+  [ "$#" -ge 1 ] || die "用法：pingcode-cli set-state <bug_id> [--state <状态名称>]"
+  local bug_id="$1" state_name="" state_id response
+  shift
+  [[ "$bug_id" =~ ^[A-Za-z0-9_-]+$ ]] || die "无效的 bug id：$bug_id"
+  while [ "$#" -gt 0 ]; do
+    [ -z "$state_name" ] || die "--state 只能指定一次"
+    case "$1" in
+      --state)
+        need_arg "$1" "${2:-}"
+        state_name="$2"
+        shift 2
+        ;;
+      --state=*)
+        state_name="${1#*=}"
+        [ -n "$state_name" ] || die "--state 需要参数"
+        shift
+        ;;
+      *) die "未知 set-state 选项：$1" ;;
+    esac
+  done
+  if [ -z "$state_name" ]; then
+    local index choice
+    for index in "${!BUG_STATES[@]}"; do
+      printf '%d) %s\n' "$((index + 1))" "${BUG_STATES[index]%%:*}" >&2
+    done
+    while :; do
+      printf '请选择状态编号（回车取消）: ' >&2
+      IFS= read -r choice || die "未选择状态，已取消"
+      case "$choice" in
+        '') printf '已取消。\n' >&2; return ;;
+        [1-7]) state_name="${BUG_STATES[choice - 1]%%:*}"; break ;;
+        *) printf '请输入 1–7 之间的编号。\n' >&2 ;;
+      esac
+    done
   fi
-  [ -n "$project" ] || die "项目缓存中找不到工作项所属项目：${project_id}"
-  if ! state_id="$(resolve_state_id "$project" "$state_name")"; then
-    cmd_projects_refresh >/dev/null
-    project="$(jq -c --arg id "$project_id" '.projects[] | select(.id == $id)' "$CONFIG_FILE" | head -1)"
-    state_id="$(resolve_state_id "$project" "$state_name")" ||
-      die "项目中没有状态：${state_name}"
-  fi
+  state_id="$(resolve_state_id "$state_name")"
 
   response="$(api_request PATCH "/v1/project/work_items/${bug_id}" \
     -H 'Content-Type: application/json' \
@@ -549,41 +606,118 @@ cmd_set_state() {
   shape_bug <<< "$response"
 }
 
+cmd_doctor() {
+  [ "$#" -eq 0 ] || die "doctor 不接受参数"
+  local command permission failed=0
+  (( BASH_VERSINFO[0] >= 5 )) || die "需要 Bash 5.0+"
+  printf 'OK: Bash %s\n' "$BASH_VERSION"
+  for command in curl jq date stat; do
+    if command -v "$command" >/dev/null 2>&1; then
+      printf 'OK: %s\n' "$command"
+    else
+      printf 'FAIL: 缺少依赖 %s\n' "$command" >&2
+      failed=1
+    fi
+  done
+  [ "$failed" -eq 0 ] || return 1
+  init_runtime
+  printf '配置路径：%s\n' "$CONFIG_FILE"
+  validate_config
+  printf 'OK: 配置字段\n'
+  permission="$(stat -c '%a' "$CONFIG_FILE" 2>/dev/null || stat -f '%Lp' "$CONFIG_FILE")"
+  if [ "$permission" = 600 ]; then
+    printf 'OK: 配置权限 600\n'
+  else
+    printf 'FAIL: 配置权限为 %s，应为 600\n' "$permission" >&2
+    failed=1
+  fi
+  if projects_cache_is_valid; then
+    printf 'OK: 项目缓存\n'
+  else
+    printf 'FAIL: 项目缓存不存在或不完整，请运行 pingcode-cli projects refresh\n' >&2
+    failed=1
+  fi
+  if token_is_valid; then
+    printf 'OK: access_token 本地有效期\n'
+    if (
+      http_request GET "${API_BASE}/v1/project/projects" --get \
+        -H 'Accept: application/json' -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+        --data-urlencode 'page_index=0' --data-urlencode 'page_size=1'
+      [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ] ||
+        die "API 检查失败（HTTP ${HTTP_STATUS}），请检查网络、权限或运行 pingcode-cli auth"
+      jq -e '.values | type == "array"' <<< "$HTTP_BODY" >/dev/null
+    ); then
+      printf 'OK: API 连通性及项目读取权限\n'
+    else
+      printf 'FAIL: API 检查失败\n' >&2
+      failed=1
+    fi
+  else
+    printf 'FAIL: access_token 缺失或已过期，请运行 pingcode-cli auth\n' >&2
+    failed=1
+  fi
+  [ "$failed" -eq 0 ]
+}
+
 usage() {
   cat <<'EOF'
 pingcode-cli - 使用 PingCode 官方 API 管理 bug
 
 用法：
-  pingcode-cli init
+  pingcode-cli config [show|path|init|set-created-after YYYY-MM-DD]
   pingcode-cli auth
+  pingcode-cli doctor
   pingcode-cli projects [refresh]
-  pingcode-cli bugs --project <项目名称> [--state <状态名称>]... [--created-after <Unix 秒数>]
+  pingcode-cli bugs [--project <项目名称>] [--created-after <Unix 秒数>]
   pingcode-cli bug <bug_id>
-  pingcode-cli set-state <bug_id> <状态名称>
+  pingcode-cli comments <bug_id>
+  pingcode-cli set-state <bug_id> [--state <状态名称>]
 
 命令：
-  init        初始化 ~/.config/pingcode-cli/config.json
+  config      初始化、脱敏查看配置、显示路径或设置日期起点
   auth        获取、刷新或重新获取用户令牌
-  projects    查看项目缓存；refresh 重新获取项目及状态
-  bugs        获取分配给我的 bug，可多次传入 --state
-  bug         获取一个 bug
+  doctor      检查依赖、配置、项目缓存、令牌和 API
+  projects    查看项目缓存；refresh 重新获取项目
+  bugs        获取分配给我的新提交和重新打开的 bug，默认全部项目
+  bug         获取一个 bug，附带评论
+  comments    获取一个 bug 的第一页未删除评论
   set-state   修改一个 bug 的状态
 EOF
 }
 
-usage_init() {
+usage_config() {
   cat <<'EOF'
-pingcode-cli init - 初始化配置
+pingcode-cli config - 管理配置
 
 用法：
-  pingcode-cli init
+  pingcode-cli config init
+  pingcode-cli config show
+  pingcode-cli config path
+  pingcode-cli config set-created-after YYYY-MM-DD
 
 交互内容：
   client_id、client_secret、my_assignee_id
   是否设置全局 created_at 起点（Unix 秒数）
 
+不传子命令时等同于 show；client_secret、access_token 和 refresh_token 脱敏展示。
+set-created-after 只接受 YYYY-MM-DD，按本机时区零点转换为 Unix 秒数并保存。
+
 配置文件：
   ~/.config/pingcode-cli/config.json
+  设置 XDG_CONFIG_HOME 时使用 $XDG_CONFIG_HOME/pingcode-cli/config.json
+EOF
+}
+
+usage_doctor() {
+  cat <<'EOF'
+pingcode-cli doctor - 检查运行环境
+
+用法：
+  pingcode-cli doctor
+
+检查 Bash、curl、jq、date、stat、配置字段和权限、项目缓存、令牌有效期，
+并通过只读项目请求检查 API 连通性与权限。失败时返回非零退出码。
+不修改配置、不刷新令牌、不触发交互授权。
 EOF
 }
 
@@ -608,7 +742,7 @@ pingcode-cli projects - 管理项目缓存
   pingcode-cli projects refresh
 
 子命令：
-  refresh  重新获取全部项目及每个项目的 bug 状态
+  refresh  重新获取全部项目，仅缓存 id 和 name
 
 不传子命令时输出缓存；缓存不存在或不完整时自动获取。
 EOF
@@ -619,12 +753,14 @@ usage_bugs() {
 pingcode-cli bugs - 获取分配给我的 bug
 
 用法：
-  pingcode-cli bugs --project <项目名称> [选项]
+  pingcode-cli bugs [选项]
 
 选项：
-  --state <状态名称>         可重复；省略时查询项目内全部缓存状态
+  --project <项目名称>       省略时直接跨项目查询，不读取项目缓存
   --created-after <Unix 秒数>  覆盖配置中的全局时间戳
   -h, --help                 显示帮助
+
+固定查询新提交和重新打开，过滤已归档或已删除的 bug；列表不请求评论。
 EOF
 }
 
@@ -637,6 +773,20 @@ pingcode-cli bug - 获取一个 bug
 
 参数：
   bug_id  PingCode API 返回的工作项 id
+
+附带 comments 数组；已归档或已删除的 bug 返回 null。
+EOF
+}
+
+usage_comments() {
+  cat <<'EOF'
+pingcode-cli comments - 获取 bug 评论
+
+用法：
+  pingcode-cli comments <bug_id>
+
+只请求第一页（最多 30 条），过滤 is_deleted = 1 的评论。
+输出数组，每条仅含 id、content、created_by（display_name）。
 EOF
 }
 
@@ -645,9 +795,12 @@ usage_set_state() {
 pingcode-cli set-state - 修改 bug 状态
 
 用法：
-  pingcode-cli set-state <bug_id> <状态名称>
+  pingcode-cli set-state <bug_id>
+  pingcode-cli set-state <bug_id> --state <状态名称>
 
-状态名称从工作项所属项目的状态缓存中解析；缓存过旧时自动刷新一次。
+省略 --state 时每行显示一个状态，输入编号后提交；直接回车或按 Ctrl-D 取消。
+可选状态：已拒绝、重新打开、已修复、新提交、挂起、已发布、处理中。
+状态 ID 固定在代码中，直接发送更新请求，不查询项目、bug 详情或状态列表。
 EOF
 }
 
@@ -661,11 +814,15 @@ is_help() {
 
 case "${1:-}" in
   -h|--help|"") usage ;;
-  init)
+  config)
     shift
-    is_help "$@" && { usage_init; exit 0; }
-    require_commands
-    cmd_init "$@"
+    is_help "$@" && { usage_config; exit 0; }
+    cmd_config "$@"
+    ;;
+  doctor)
+    shift
+    is_help "$@" && { usage_doctor; exit 0; }
+    cmd_doctor "$@"
     ;;
   auth)
     shift
@@ -694,6 +851,13 @@ case "${1:-}" in
     require_commands
     validate_config
     cmd_bug "$@"
+    ;;
+  comments)
+    shift
+    is_help "$@" && { usage_comments; exit 0; }
+    require_commands
+    validate_config
+    cmd_comments "$@"
     ;;
   set-state)
     shift
