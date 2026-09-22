@@ -73,7 +73,7 @@ Skills 用于承载可复用的工作流和任务约定。简单 CLI 直接查�
 | [qweather-cli](cli/qweather-cli/) | QWeather 命令行工具（实时天气 / 每日预报 / 逐小时预报） |
 | [readlater-cli](cli/readlater-cli/) | 极简 read-it-later 抓取工具（URL 标题 / 简单概要 / JSON 输出，X/Twitter 优先走 oEmbed） |
 | [skill-auto](cli/skill-auto/) | 同步开启或关闭 Skill 的模型自动调用与默认上下文注入 |
-| [jenkins-builder-cli](cli/jenkins-builder-cli/) | Jenkins 构建命令行工具（实时 jobs / 标签与别称 / 触发构建 / 改分支 / 日志 / 停止） |
+| [jenkins-builder-cli](cli/jenkins-builder-cli/) | Jenkins 构建命令行工具（配置检查 / jobs 同步 / 标签与描述 / 交互选分支构建 / 日志 / 停止） |
 | [cos-cli](cli/cos-cli/) | 上传图片或文件夹到腾讯云 COS（配置文件 / MD5 命名 / 自定义前缀 / 预览 / URL 与 JSON 输出） |
 | [testpage-cli](cli/testpage-cli/) | 测试 HTML 页面快速发布工具（同步目录 / 覆盖目标 / Git 提交并推送 / 返回访问 URL） |
 | [wt-land](cli/wt-land/) | 将当前功能分支 rebase 后 fast-forward 到本地目标分支，支持同目录和多 worktree |

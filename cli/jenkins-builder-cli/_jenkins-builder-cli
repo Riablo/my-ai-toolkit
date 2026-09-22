@@ -1,9 +1,10 @@
 #compdef jenkins-builder-cli
 
 _jenkins-builder-cli() {
-  local -a commands config_commands jobs_commands alias_commands runs_commands labels
+  local -a commands config_commands jobs_commands runs_commands labels
   commands=(
     'config:管理本地配置'
+    'doctor:检查配置和连接并同步 jobs'
     'jobs:列出和管理 jobs'
     'build:触发构建'
     'set-branch:修改分支配置'
@@ -13,20 +14,13 @@ _jenkins-builder-cli() {
   config_commands=(
     'init:初始化 Jenkins 配置'
     'show:查看配置'
-    'edit:编辑配置文件'
     'path:显示配置文件路径'
-    'check:检查配置是否可用'
   )
   jobs_commands=(
     'list:列出可构建 jobs'
     'label:标注 job 为测试服或正式服'
     'unlabel:移除 job 标签'
-    'alias:管理 job 别称'
-  )
-  alias_commands=(
-    'list:列出 job 别称'
-    'add:添加 job 别称'
-    'rm:删除 job 别称'
+    'desc:设置 job 描述（空字符串清除）'
   )
   runs_commands=(
     'list:列出运行中的构建'
@@ -44,9 +38,24 @@ _jenkins-builder-cli() {
     return
   fi
 
-  case "$words[2]" in
+  local command="$words[2]" subcommand="$words[3]"
+  # _arguments treats words[1] as the command; remove each parent command.
+  shift words
+  (( CURRENT-- ))
+  if [[ "$command" == (config|runs) ]] && (( CURRENT > 2 )); then
+    shift words
+    (( CURRENT-- ))
+  elif [[ "$command" == jobs && "$subcommand" == (list|label|unlabel|desc) ]] && (( CURRENT > 2 )); then
+    shift words
+    (( CURRENT-- ))
+  fi
+
+  case "$command" in
+    doctor)
+      _arguments '--json[输出 JSON]'
+      ;;
     config)
-      case "$words[3]" in
+      case "$subcommand" in
         init)
           _arguments \
             '--url[Jenkins URL]:url:_urls' \
@@ -58,50 +67,42 @@ _jenkins-builder-cli() {
           _arguments '--json[输出 JSON]'
           ;;
         *)
-          if (( CURRENT == 3 )); then
+          if (( CURRENT == 2 )); then
             _describe -t config-commands 'config command' config_commands
           fi
           ;;
       esac
       ;;
     jobs)
-      case "$words[3]" in
+      case "$subcommand" in
         list)
           _arguments \
-            '--query[按名称/标签/别称过滤]:query:' \
+            '--query[按名称/标签/描述过滤]:query:' \
             '--json[输出 JSON]'
           ;;
         label)
           _arguments \
             '--json[输出 JSON]' \
-            '1:job name or alias:' \
+            '1:job name:' \
             '2:label:($labels)'
           ;;
         unlabel)
           _arguments \
             '--json[输出 JSON]' \
-            '1:job name or alias:'
+            '1:job name:'
           ;;
-        alias)
-          case "$words[4]" in
-            list)
-              _arguments '--json[输出 JSON]'
-              ;;
-            add|rm)
-              _arguments \
-                '--json[输出 JSON]' \
-                '1:job name or alias:' \
-                '2:alias:'
-              ;;
-            *)
-              if (( CURRENT == 4 )); then
-                _describe -t alias-commands 'alias command' alias_commands
-              fi
-              ;;
-          esac
+        desc)
+          _arguments \
+            '--json[输出 JSON]' \
+            '1:job name:' \
+            '2:description:'
           ;;
         *)
-          if (( CURRENT == 3 )); then
+          if [[ "$PREFIX" == -* ]]; then
+            _arguments \
+              '--query[按名称/标签/描述过滤]:query:' \
+              '--json[输出 JSON]'
+          elif (( CURRENT == 2 )); then
             _describe -t jobs-commands 'jobs command' jobs_commands
           fi
           ;;
@@ -111,16 +112,17 @@ _jenkins-builder-cli() {
       _arguments \
         '--follow[等待构建完成]' \
         '--json[输出 JSON]' \
-        '1:job name or alias:'
+        '--job[完整 Jenkins job 名称]:job name:' \
+        '--branch[先持久修改分支再构建]:branch:'
       ;;
     set-branch)
       _arguments \
         '--json[输出 JSON]' \
-        '1:job name or alias:' \
-        '2:branch:'
+        '--job[完整 Jenkins job 名称]:job name:' \
+        '--branch[目标分支名称]:branch:'
       ;;
     runs)
-      case "$words[3]" in
+      case "$subcommand" in
         list)
           _arguments '--json[输出 JSON]'
           ;;
@@ -130,7 +132,7 @@ _jenkins-builder-cli() {
             '1:run id:'
           ;;
         *)
-          if (( CURRENT == 3 )); then
+          if (( CURRENT == 2 )); then
             _describe -t runs-commands 'runs command' runs_commands
           fi
           ;;

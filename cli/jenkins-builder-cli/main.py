@@ -10,8 +10,8 @@ import io
 import json
 import os
 import stat
-import subprocess
 import sys
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 from collections import deque
@@ -83,11 +83,8 @@ class JobEntry:
         return LABEL_DISPLAY.get(self.label or "", "未分类")
 
     @property
-    def aliases(self) -> list[str]:
-        raw = self.metadata.get("aliases")
-        if not isinstance(raw, list):
-            return []
-        return [str(alias) for alias in raw if str(alias).strip()]
+    def description(self) -> str:
+        return self.metadata.get("description", "")
 
     @property
     def branch_display(self) -> str:
@@ -124,50 +121,76 @@ def default_config() -> dict[str, Any]:
 def ensure_config_shape(data: dict[str, Any] | None) -> dict[str, Any]:
     merged = default_config()
     if not isinstance(data, dict):
-        return merged
+        raise CLIError("配置文件根节点必须是 YAML 对象")
+
+    for section in ("jenkins", "defaults", "jobs"):
+        if section in data and not isinstance(data[section], dict):
+            raise CLIError(f"配置项 {section} 必须是对象")
 
     jenkins = data.get("jenkins")
     if isinstance(jenkins, dict):
-        merged["jenkins"].update({k: v for k, v in jenkins.items() if v is not None})
+        merged["jenkins"].update(jenkins)
 
     defaults = data.get("defaults")
     if isinstance(defaults, dict):
-        merged["defaults"].update({k: v for k, v in defaults.items() if v is not None})
+        merged["defaults"].update(defaults)
 
     jobs = data.get("jobs")
     if isinstance(jobs, dict):
-        merged["jobs"] = {
-            str(name): normalize_job_meta(meta)
-            for name, meta in jobs.items()
-            if isinstance(name, str) and isinstance(meta, dict)
-        }
+        for name, meta in jobs.items():
+            if not isinstance(name, str) or not name.strip() or not isinstance(meta, dict):
+                raise CLIError("jobs 必须以非空 job 名称为键、对象为值")
+            merged["jobs"][name] = normalize_job_meta(meta)
 
     return merged
 
 
 def normalize_job_meta(meta: dict[str, Any]) -> dict[str, Any]:
-    normalized: dict[str, Any] = {}
+    label = meta.get("label", meta.get("env", ""))
+    if label not in ("", "test", "prod"):
+        raise CLIError("job 的 label 必须是 test、prod 或空字符串")
+    description = meta.get("description")
+    if "description" not in meta:
+        # Preserve existing annotations when migrating the old config format.
+        parts = []
+        for key in ("aliases", "keywords"):
+            value = meta.get(key, [])
+            if isinstance(value, str):
+                value = value.split(",")
+            if not isinstance(value, list) or any(not isinstance(part, str) for part in value):
+                raise CLIError(f"旧配置的 {key} 必须是字符串或字符串列表")
+            parts.extend(part.strip() for part in value if part.strip())
+        description = "；".join(dict.fromkeys(parts))
+    if not isinstance(description, str):
+        raise CLIError("job 的 description 必须是字符串（可以为空）")
+    return {"label": label, "description": description.strip()}
 
-    label = meta.get("label", meta.get("env"))
-    if label in LABEL_DISPLAY:
-        normalized["label"] = label
 
-    aliases: list[str] = []
-    raw_aliases = meta.get("aliases")
-    if isinstance(raw_aliases, list):
-        aliases.extend(str(alias).strip() for alias in raw_aliases if str(alias).strip())
-    elif isinstance(raw_aliases, str) and raw_aliases.strip():
-        aliases.extend(part.strip() for part in raw_aliases.split(",") if part.strip())
-
-    legacy_keywords = meta.get("keywords")
-    if isinstance(legacy_keywords, str) and legacy_keywords.strip():
-        aliases.extend(part.strip() for part in legacy_keywords.split(",") if part.strip())
-
-    deduped_aliases = list(dict.fromkeys(aliases))
-    if deduped_aliases:
-        normalized["aliases"] = deduped_aliases
-
-    return normalized
+def validate_config(config: dict[str, Any], *, required: bool = True) -> None:
+    errors = []
+    jenkins = config["jenkins"]
+    for key in ("url", "username", "token"):
+        value = jenkins.get(key)
+        if not isinstance(value, str) or (required and not value.strip()):
+            errors.append(f"jenkins.{key} 必须是非空字符串")
+    url = jenkins.get("url")
+    if isinstance(url, str) and url:
+        try:
+            parsed = urlparse(url)
+            valid_url = parsed.scheme in ("http", "https") and parsed.hostname and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
+            _ = parsed.port
+        except ValueError:
+            valid_url = False
+        if not valid_url or any(char.isspace() for char in url):
+            errors.append("jenkins.url 必须是有效的 HTTP(S) 地址，不能包含账号、密码、查询参数或片段")
+    if not isinstance(jenkins.get("verify_ssl"), bool):
+        errors.append("jenkins.verify_ssl 必须是 true 或 false")
+    for key in ("timeout_seconds", "poll_interval_seconds"):
+        value = config["defaults"].get(key)
+        if type(value) is not int or value <= 0:
+            errors.append(f"defaults.{key} 必须是正整数")
+    if errors:
+        raise CLIError("配置检查失败:\n" + "\n".join(f"- {error}" for error in errors))
 
 
 def load_config(required: bool = True) -> dict[str, Any]:
@@ -178,32 +201,30 @@ def load_config(required: bool = True) -> dict[str, Any]:
             )
         return default_config()
 
-    with CONFIG_PATH.open() as handle:
-        data = yaml.safe_load(handle) or {}
+    try:
+        with CONFIG_PATH.open(encoding="utf-8") as handle:
+            data = yaml.safe_load(handle)
+    except (yaml.YAMLError, UnicodeError) as exc:
+        # YAML errors can include the source line containing credentials.
+        raise CLIError(f"配置文件 YAML 格式错误: {CONFIG_PATH}") from exc
 
     config = ensure_config_shape(data)
-
-    if required:
-        missing = []
-        if not config["jenkins"].get("url"):
-            missing.append("jenkins.url")
-        if not config["jenkins"].get("username"):
-            missing.append("jenkins.username")
-        if not config["jenkins"].get("token"):
-            missing.append("jenkins.token")
-        if missing:
-            raise CLIError(
-                f"配置文件缺少必填字段: {', '.join(missing)}\n请运行: {APP_NAME} config init"
-            )
-
+    validate_config(config, required=required)
     return config
 
 
 def save_config(config: dict[str, Any]) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with CONFIG_PATH.open("w") as handle:
-        yaml.safe_dump(config, handle, allow_unicode=True, sort_keys=False)
-    os.chmod(CONFIG_PATH, stat.S_IRUSR | stat.S_IWUSR)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=CONFIG_DIR, delete=False) as handle:
+            temporary_path = Path(handle.name)
+            yaml.safe_dump(config, handle, allow_unicode=True, sort_keys=False)
+        os.chmod(temporary_path, stat.S_IRUSR | stat.S_IWUSR)
+        os.replace(temporary_path, CONFIG_PATH)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def masked_token(token: str) -> str:
@@ -214,6 +235,12 @@ def masked_token(token: str) -> str:
     return f"{token[:2]}{'*' * (len(token) - 4)}{token[-2:]}"
 
 
+def nonempty_value(value: str) -> str:
+    if not value.strip():
+        raise argparse.ArgumentTypeError("参数不能为空")
+    return value
+
+
 def bool_value(value: str) -> bool:
     lowered = value.strip().lower()
     if lowered in {"1", "true", "yes", "y", "on"}:
@@ -221,10 +248,6 @@ def bool_value(value: str) -> bool:
     if lowered in {"0", "false", "no", "n", "off"}:
         return False
     raise argparse.ArgumentTypeError(f"无法识别布尔值: {value}")
-
-
-def ci_equals(left: str, right: str) -> bool:
-    return left.casefold() == right.casefold()
 
 
 def contains_ci(haystack: str, needle: str) -> bool:
@@ -375,7 +398,13 @@ class JenkinsClient:
             raise self._http_error(url, exc.response) from exc
         except requests.RequestException as exc:
             raise CLIError(f"请求失败: {url}\n{exc}") from exc
-        return response.json()
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise CLIError(f"Jenkins 返回的不是有效 JSON: {url}") from exc
+        if not isinstance(data, dict):
+            raise CLIError(f"Jenkins 返回的 JSON 不是对象: {url}")
+        return data
 
     def get_text(self, path_or_url: str) -> str:
         url = self._url(path_or_url)
@@ -461,7 +490,11 @@ class JenkinsClient:
                 f"{container_url.rstrip('/')}/api/json",
                 params={"tree": "jobs[name,fullName,url,color,_class,buildable]"},
             )
-            for item in data.get("jobs", []):
+            if not isinstance(data.get("jobs"), list):
+                raise CLIError("Jenkins 响应缺少 jobs 列表，未同步本地配置")
+            for item in data["jobs"]:
+                if not isinstance(item, dict) or not item.get("url"):
+                    raise CLIError("Jenkins 返回了无效 job，未同步本地配置")
                 item_url = str(item.get("url") or "")
                 if not item_url or item_url in seen_urls:
                     continue
@@ -475,8 +508,8 @@ class JenkinsClient:
                     continue
                 try:
                     full_name = str(item.get("fullName") or extract_full_name_from_job_url(self.base_url, item_url))
-                except CLIError:
-                    continue
+                except CLIError as exc:
+                    raise CLIError("Jenkins 返回了无效 job 名称，未同步本地配置") from exc
                 jobs.append(
                     {
                         "full_name": full_name,
@@ -492,10 +525,18 @@ class JenkinsClient:
         return jobs
 
     def trigger_build(self, job_url: str) -> str:
-        endpoint = f"{job_url.rstrip('/')}/build"
+        job_url = job_url.rstrip("/")
+        info = self.get_json(f"{job_url}/api/json", params={"tree": "property[_class]"})
+        properties = info.get("property")
+        if not isinstance(properties, list) or any(not isinstance(prop, dict) for prop in properties):
+            raise CLIError("无法读取 job 参数配置，未触发构建")
+        parameterized = any(prop.get("_class") == "hudson.model.ParametersDefinitionProperty" for prop in properties)
+        # Let Jenkins supply parameter defaults; /build expects form JSON for
+        # parameterized jobs and rejects an empty POST with HTTP 400.
+        endpoint = f"{job_url}/{'buildWithParameters' if parameterized else 'build'}"
         response = self.post(
             endpoint,
-            expected_codes=(200, 201, 202, 302),
+            expected_codes=(200, 201, 202, 302, 303),
             allow_redirects=False,
         )
         location = response.headers.get("Location", "")
@@ -651,9 +692,6 @@ def fetch_live_branch_specifier(client: JenkinsClient, job_url: str) -> str | No
 def job_entries_from_live_jobs(
     config: dict[str, Any],
     live_jobs: list[dict[str, Any]],
-    *,
-    client: JenkinsClient | None = None,
-    with_live_branch_specs: bool = False,
 ) -> list[JobEntry]:
     entries = [
         JobEntry(
@@ -666,11 +704,6 @@ def job_entries_from_live_jobs(
         )
         for job in live_jobs
     ]
-    if with_live_branch_specs:
-        if client is None:
-            raise CLIError("获取实时分支信息时缺少 Jenkins client")
-        for entry in entries:
-            entry.live_branch_specifier = fetch_live_branch_specifier(client, entry.url)
     entries.sort(key=job_sort_key)
     return entries
 
@@ -691,49 +724,30 @@ def filter_jobs(entries: list[JobEntry], *, query: str | None) -> list[JobEntry]
 
 
 def query_matches_job(query: str, entry: JobEntry) -> bool:
-    haystacks = [entry.full_name, entry.label_display, *(entry.aliases)]
+    haystacks = [entry.full_name, entry.label_display, entry.description]
     return any(contains_ci(haystack, query) for haystack in haystacks if haystack)
 
 
-def resolve_job_ref(ref: str, entries: list[JobEntry]) -> JobEntry:
+def resolve_job_name(job_name: str, entries: list[JobEntry]) -> JobEntry:
     for entry in entries:
-        if entry.full_name == ref:
+        if entry.full_name == job_name:
             return entry
 
-    alias_candidates = [
-        entry
-        for entry in entries
-        if any(ci_equals(alias, ref) for alias in entry.aliases)
-    ]
-    if len(alias_candidates) == 1:
-        return alias_candidates[0]
-    if len(alias_candidates) > 1:
-        raise CLIError(
-            f"别称不唯一: {ref}\n"
-            "匹配到这些 job:\n"
-            + "\n".join(f"- {entry.full_name}" for entry in alias_candidates[:20])
-        )
-
-    candidates = [entry for entry in entries if contains_ci(entry.full_name, ref)]
+    candidates = [entry for entry in entries if contains_ci(entry.full_name, job_name)]
     if candidates:
         raise CLIError(
-            "命令行参数只接受完整 Jenkins job name 或唯一别称。\n"
+            "命令行参数只接受完整 Jenkins job name。\n"
             "可能的 job name 候选:\n"
             + "\n".join(f"- {entry.full_name}" for entry in candidates[:20])
         )
     raise CLIError(
-        f"找不到 job 或别称: {ref}\n"
-        f"可以先运行: {APP_NAME} jobs list --query \"{ref}\""
+        f"找不到 job: {job_name}\n"
+        f"可以先运行: {APP_NAME} jobs list --query \"{job_name}\""
     )
 
 
 def save_job_meta(config: dict[str, Any], full_name: str, meta: dict[str, Any]) -> None:
-    jobs = config.setdefault("jobs", {})
-    normalized = normalize_job_meta(meta)
-    if normalized:
-        jobs[full_name] = normalized
-    else:
-        jobs.pop(full_name, None)
+    config.setdefault("jobs", {})[full_name] = normalize_job_meta(meta)
 
 
 def render_jobs(entries: list[JobEntry]) -> str:
@@ -744,49 +758,61 @@ def render_jobs(entries: list[JobEntry]) -> str:
                 f"{index}. {entry.full_name}",
                 entry.label_display,
                 entry.branch_display,
-                ", ".join(entry.aliases) or "-",
+                entry.description or "-",
             ]
         )
     if not rows:
         return "没有找到任何 job。"
-    return build_cards(rows, ["JOB", "LABEL", "BRANCH", "ALIASES"])
+    return build_cards(rows, ["JOB", "LABEL", "BRANCH", "DESCRIPTION"])
+
+
+def prompt_choice(prompt: str, count: int) -> int:
+    while True:
+        print(prompt, end="", file=sys.stderr, flush=True)
+        answer = input().strip()
+        try:
+            index = int(answer)
+        except ValueError:
+            print("请输入数字序号。", file=sys.stderr)
+            continue
+        if 1 <= index <= count:
+            return index - 1
+        print("序号超出范围。", file=sys.stderr)
 
 
 def interactive_select_job(entries: list[JobEntry]) -> JobEntry:
     require_tty()
     if not entries:
         raise CLIError("当前没有可供选择的 job")
+    labels = [label for label in LABEL_ORDER if any((entry.label or "") == label for entry in entries)]
+    for index, label in enumerate(labels, start=1):
+        print(f"{index}. {LABEL_DISPLAY.get(label, '未分类')}", file=sys.stderr)
+    label = labels[prompt_choice("请选择分组序号: ", len(labels))]
+    jobs = [entry for entry in entries if (entry.label or "") == label]
+    for index, entry in enumerate(jobs, start=1):
+        description = " ".join(entry.description.split())
+        print(f"{index}. {entry.full_name}" + (f" — {description}" if description else ""), file=sys.stderr)
+    return jobs[prompt_choice("请选择 job 序号: ", len(jobs))]
+
+
+def prompt_branch(client: JenkinsClient, entry: JobEntry, *, optional: bool = False) -> str | None:
+    require_tty()
+    current = fetch_live_branch_specifier(client, entry.url)
+    print(f"当前分支: {current or '无法读取（非经典 Git job 或无配置读取权限）'}", file=sys.stderr)
     while True:
-        answer = input("请输入要构建的序号（1 开始）: ").strip()
-        if not answer:
-            continue
-        try:
-            index = int(answer)
-        except ValueError:
-            print("请输入数字序号。", file=sys.stderr)
-            continue
-        if 1 <= index <= len(entries):
-            return entries[index - 1]
-        print("序号超出范围。", file=sys.stderr)
-
-
-def numbered_jobs(entries: list[JobEntry]) -> str:
-    rows = []
-    for index, entry in enumerate(entries, start=1):
-        rows.append(
-            [
-                f"{index}. {entry.full_name}",
-                entry.label_display,
-                entry.branch_display,
-                ", ".join(entry.aliases) or "-",
-            ]
-        )
-    return build_cards(rows, ["", "LABEL", "BRANCH", "ALIASES"])
+        print("分支名（回车使用当前分支）: " if optional else "请输入分支名: ", end="", file=sys.stderr, flush=True)
+        branch = input().strip()
+        if branch or optional:
+            return branch or None
+        print("分支名不能为空。", file=sys.stderr)
 
 
 def parse_branch_specifier(xml_text: str) -> tuple[str, ET.ElementTree, ET.Element]:
     parser = ET.XMLParser(target=ET.TreeBuilder(insert_comments=True))
-    root = ET.fromstring(xml_text, parser=parser)
+    try:
+        root = ET.fromstring(xml_text, parser=parser)
+    except ET.ParseError as exc:
+        raise CLIError("Jenkins job 配置不是有效 XML") from exc
     tree = ET.ElementTree(root)
     git_scms = [element for element in root.iter() if element.attrib.get("class") == "hudson.plugins.git.GitSCM"]
     if len(git_scms) != 1:
@@ -811,7 +837,7 @@ def job_info_payload(entry: JobEntry) -> dict[str, Any]:
         "url": entry.url,
         "label": entry.label,
         "label_display": entry.label_display,
-        "aliases": entry.aliases,
+        "description": entry.description,
         "branch_specifier": entry.live_branch_specifier,
         "buildable": entry.buildable,
         "class_name": entry.class_name,
@@ -848,25 +874,20 @@ def build_status_payload(full_name: str, build_number: int, job_url: str, info: 
     return payload
 
 
-def create_client_and_entries(*, with_live_branch_specs: bool = False, ref: str | None = None) -> tuple[dict[str, Any], JenkinsClient, list[JobEntry]]:
+def create_client_and_entries(*, job_name: str | None = None, sync: bool = False) -> tuple[dict[str, Any], JenkinsClient, list[JobEntry]]:
     config = load_config(required=True)
     client = JenkinsClient(config)
     live_jobs = None
-    if ref:
-        exact = client.find_job(ref)
+    if job_name is not None and not sync:
+        exact = client.find_job(job_name)
         if exact is not None:
             live_jobs = [exact]
-        else:
-            # Exact remote names retain priority over local aliases. Validate all
-            # alias owners so removed/disabled jobs do not create false ambiguity.
-            aliases = [client.find_job(name) for name in alias_owners(config, ref)]
-            live_jobs = [job for job in aliases if job is not None] or None
-    entries = job_entries_from_live_jobs(
-        config,
-        client.list_jobs() if live_jobs is None else live_jobs,
-        client=client,
-        with_live_branch_specs=with_live_branch_specs,
-    )
+    if live_jobs is None:
+        live_jobs = client.list_jobs()
+    if sync:
+        config["jobs"] = {job["full_name"]: get_job_meta(config, job["full_name"]) for job in live_jobs}
+        save_config(config)
+    entries = job_entries_from_live_jobs(config, live_jobs)
     return config, client, entries
 
 
@@ -911,6 +932,7 @@ def cmd_config_init(args: argparse.Namespace) -> None:
         "token": token,
         "verify_ssl": bool(verify_ssl),
     }
+    validate_config(config)
     save_config(config)
     print(f"配置已写入: {CONFIG_PATH}")
 
@@ -925,41 +947,32 @@ def cmd_config_show(args: argparse.Namespace) -> None:
     print(yaml_dump(masked))
 
 
-def cmd_config_edit(args: argparse.Namespace) -> None:
-    editor = os.environ.get("EDITOR", "vi")
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    if not CONFIG_PATH.exists():
-        save_config(default_config())
-    try:
-        subprocess.run([editor, str(CONFIG_PATH)], check=True)
-    except FileNotFoundError as exc:
-        raise CLIError(f"找不到编辑器: {editor}") from exc
-    except subprocess.CalledProcessError as exc:
-        raise CLIError(f"编辑器退出失败: {exc.returncode}") from exc
-
-
 def cmd_config_path(args: argparse.Namespace) -> None:
     print(CONFIG_PATH)
 
 
-def cmd_config_check(args: argparse.Namespace) -> None:
-    config = load_config(required=True)
+def cmd_doctor(args: argparse.Namespace) -> None:
+    _, _, entries = create_client_and_entries(sync=True)
+    missing = [entry.full_name for entry in entries if not entry.description]
     payload = {
         "status": "ok",
         "configPath": str(CONFIG_PATH),
-        "jenkins": {
-            "url": normalize_base_url(str(config["jenkins"].get("url") or "")),
-            "username": str(config["jenkins"].get("username") or ""),
-            "token": masked_token(str(config["jenkins"].get("token") or "")),
-            "verify_ssl": bool(config["jenkins"].get("verify_ssl", DEFAULT_VERIFY_SSL)),
-        },
-        "jobsCount": len(config.get("jobs") or {}),
+        "jobsCount": len(entries),
+        "missing_descriptions": missing,
     }
-    print_json(payload)
+    if args.json:
+        print_json(payload)
+        return
+    print(f"配置与 Jenkins 连接检查通过，已同步 {len(entries)} 个 job。")
+    print(f"配置文件: {CONFIG_PATH}")
+    if missing:
+        print("以下 job 尚未填写描述（可选，不影响使用）:")
+        for name in missing:
+            print(f"- {name}")
 
 
 def cmd_jobs_list(args: argparse.Namespace) -> None:
-    _, client, entries = create_client_and_entries()
+    _, client, entries = create_client_and_entries(sync=True)
     filtered = filter_jobs(entries, query=args.query)
     for entry in filtered:
         entry.live_branch_specifier = fetch_live_branch_specifier(client, entry.url)
@@ -970,9 +983,9 @@ def cmd_jobs_list(args: argparse.Namespace) -> None:
 
 
 def cmd_jobs_label(args: argparse.Namespace) -> None:
-    config, _, entries = create_client_and_entries(ref=args.job_ref)
-    entry = resolve_job_ref(args.job_ref, entries)
-    meta = normalize_job_meta(config.setdefault("jobs", {}).get(entry.full_name) or {})
+    config, _, entries = create_client_and_entries(sync=True)
+    entry = resolve_job_name(args.job_name, entries)
+    meta = get_job_meta(config, entry.full_name)
     meta["label"] = args.label
     save_job_meta(config, entry.full_name, meta)
     save_config(config)
@@ -986,94 +999,33 @@ def cmd_jobs_label(args: argparse.Namespace) -> None:
 
 
 def cmd_jobs_unlabel(args: argparse.Namespace) -> None:
-    config, _, entries = create_client_and_entries(ref=args.job_ref)
-    entry = resolve_job_ref(args.job_ref, entries)
-    meta = normalize_job_meta(config.setdefault("jobs", {}).get(entry.full_name) or {})
-    meta.pop("label", None)
+    config, _, entries = create_client_and_entries(sync=True)
+    entry = resolve_job_name(args.job_name, entries)
+    meta = get_job_meta(config, entry.full_name)
+    meta["label"] = ""
     save_job_meta(config, entry.full_name, meta)
     save_config(config)
 
-    payload = {"job": entry.full_name, "label": None}
+    payload = {"job": entry.full_name, "label": ""}
     if args.json:
         print_json(payload)
         return
     print(f"已移除 job 标签: {entry.full_name}")
 
 
-def alias_owners(config: dict[str, Any], alias: str) -> list[str]:
-    owners = []
-    for full_name, meta in (config.get("jobs") or {}).items():
-        normalized = normalize_job_meta(meta)
-        if any(ci_equals(existing, alias) for existing in normalized.get("aliases", [])):
-            owners.append(full_name)
-    return owners
-
-
-def cmd_jobs_alias_list(args: argparse.Namespace) -> None:
-    config = load_config(required=False)
-    items = []
-    for full_name, meta in sorted((config.get("jobs") or {}).items()):
-        normalized = normalize_job_meta(meta)
-        aliases = normalized.get("aliases") or []
-        if aliases:
-            items.append({"job": full_name, "aliases": aliases})
-
-    if args.json:
-        print_json(items)
-        return
-    if not items:
-        print("没有配置任何 job 别称。")
-        return
-    print(build_cards([[item["job"], ", ".join(item["aliases"])] for item in items], ["JOB", "ALIASES"]))
-
-
-def cmd_jobs_alias_add(args: argparse.Namespace) -> None:
-    config, _, entries = create_client_and_entries(ref=args.job_ref)
-    entry = resolve_job_ref(args.job_ref, entries)
-    alias = args.alias.strip()
-    if not alias:
-        raise CLIError("别称不能为空")
-
-    owners = [owner for owner in alias_owners(config, alias) if owner != entry.full_name]
-    if owners:
-        raise CLIError(
-            f"别称已被其他 job 使用: {alias}\n"
-            + "\n".join(f"- {owner}" for owner in owners[:20])
-        )
-
-    meta = normalize_job_meta(config.setdefault("jobs", {}).get(entry.full_name) or {})
-    aliases = meta.setdefault("aliases", [])
-    if not any(ci_equals(existing, alias) for existing in aliases):
-        aliases.append(alias)
+def cmd_jobs_desc(args: argparse.Namespace) -> None:
+    config, _, entries = create_client_and_entries(sync=True)
+    entry = resolve_job_name(args.job_name, entries)
+    meta = get_job_meta(config, entry.full_name)
+    meta["description"] = args.description.strip()
     save_job_meta(config, entry.full_name, meta)
     save_config(config)
-
-    payload = {"job": entry.full_name, **normalize_job_meta(config["jobs"][entry.full_name])}
+    payload = {"job": entry.full_name, **config["jobs"][entry.full_name]}
     if args.json:
         print_json(payload)
         return
-    print("已添加 job 别称:")
+    print("已更新 job 描述:")
     print(yaml_dump(payload))
-
-
-def cmd_jobs_alias_rm(args: argparse.Namespace) -> None:
-    config, _, entries = create_client_and_entries(ref=args.job_ref)
-    entry = resolve_job_ref(args.job_ref, entries)
-    alias = args.alias.strip()
-    meta = normalize_job_meta(config.setdefault("jobs", {}).get(entry.full_name) or {})
-    aliases = [existing for existing in meta.get("aliases", []) if not ci_equals(existing, alias)]
-    if aliases:
-        meta["aliases"] = aliases
-    else:
-        meta.pop("aliases", None)
-    save_job_meta(config, entry.full_name, meta)
-    save_config(config)
-
-    payload = {"job": entry.full_name, "removed_alias": alias}
-    if args.json:
-        print_json(payload)
-        return
-    print(f"已删除 job 别称: {entry.full_name} -> {alias}")
 
 
 def update_branch_specifier(
@@ -1095,12 +1047,12 @@ def update_branch_specifier(
 
 
 def cmd_set_branch(args: argparse.Namespace) -> None:
-    config, client, entries = create_client_and_entries(ref=args.ref)
-    _ = config
-    entry = resolve_job_ref(args.ref, entries)
-
-    payload = update_branch_specifier(client, entry, args.branch)
-
+    if args.job is None or args.branch is None:
+        require_tty()
+    _, client, entries = create_client_and_entries(job_name=args.job)
+    entry = resolve_job_name(args.job, entries) if args.job is not None else interactive_select_job(entries)
+    branch = args.branch if args.branch is not None else prompt_branch(client, entry)
+    payload = update_branch_specifier(client, entry, branch)
     if args.json:
         print_json(payload)
         return
@@ -1152,23 +1104,22 @@ def _trigger_and_collect(
 
 
 def cmd_build(args: argparse.Namespace) -> None:
-    config, client, entries = create_client_and_entries(with_live_branch_specs=args.ref is None, ref=args.ref)
+    if args.job is None:
+        require_tty()
+    config, client, entries = create_client_and_entries(job_name=args.job)
+    entry = resolve_job_name(args.job, entries) if args.job is not None else interactive_select_job(entries)
+    branch = args.branch
+    if args.job is None and branch is None:
+        branch = prompt_branch(client, entry, optional=True)
+    if branch is not None:
+        update_branch_specifier(client, entry, branch)
 
-    if args.ref:
-        targets = [resolve_job_ref(args.ref, entries)]
-    else:
-        print(numbered_jobs(entries))
-        print("")
-        targets = [interactive_select_job(entries)]
-
-    results = _trigger_and_collect(client, config, targets, follow=args.follow)
-
+    results = _trigger_and_collect(client, config, [entry], follow=args.follow)
     if args.json:
-        print_json(results if len(results) > 1 else results[0])
+        print_json(results[0])
         return
-    for r in results:
-        print("构建已触发:")
-        print(yaml_dump(r))
+    print("构建已触发:")
+    print(yaml_dump(results[0]))
 
 
 def cmd_runs_list(args: argparse.Namespace) -> None:
@@ -1323,7 +1274,7 @@ def emit_log_text(text: str, tail: int | None = None) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog=APP_NAME, description="Trigger Jenkins builds from the command line.")
+    parser = argparse.ArgumentParser(prog=APP_NAME, description="管理 Jenkins jobs、分支与构建。")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     config_parser = subparsers.add_parser("config", help="管理本地配置")
@@ -1340,62 +1291,51 @@ def build_parser() -> argparse.ArgumentParser:
     config_show.add_argument("--json", action="store_true", help="输出 JSON")
     config_show.set_defaults(func=cmd_config_show)
 
-    config_edit = config_subparsers.add_parser("edit", help="编辑配置文件")
-    config_edit.set_defaults(func=cmd_config_edit)
-
     config_path = config_subparsers.add_parser("path", help="显示配置文件路径")
     config_path.set_defaults(func=cmd_config_path)
 
-    config_check = config_subparsers.add_parser("check", help="检查配置是否可用")
-    config_check.set_defaults(func=cmd_config_check)
+    doctor_parser = subparsers.add_parser("doctor", help="检查配置和连接，同步 jobs 并提醒缺少的描述")
+    doctor_parser.add_argument("--json", action="store_true", help="输出 JSON")
+    doctor_parser.set_defaults(func=cmd_doctor)
 
-    jobs_parser = subparsers.add_parser("jobs", help="列出和管理 jobs")
-    jobs_subparsers = jobs_parser.add_subparsers(dest="jobs_command", required=True)
+    jobs_parser = subparsers.add_parser("jobs", help="列出和管理 jobs（自动同步本地配置）")
+    jobs_parser.add_argument("--query", help="按 job 名称、标签或描述过滤")
+    jobs_parser.add_argument("--json", action="store_true", help="输出 JSON")
+    jobs_parser.set_defaults(func=cmd_jobs_list)
+    jobs_subparsers = jobs_parser.add_subparsers(dest="jobs_command")
 
     jobs_list = jobs_subparsers.add_parser("list", help="列出可构建 jobs")
-    jobs_list.add_argument("--query", help="按 job 名称、标签或别称过滤")
+    jobs_list.add_argument("--query", help="按 job 名称、标签或描述过滤")
     jobs_list.add_argument("--json", action="store_true", help="输出 JSON")
     jobs_list.set_defaults(func=cmd_jobs_list)
 
     jobs_label = jobs_subparsers.add_parser("label", help="标注 job 为测试服或正式服")
-    jobs_label.add_argument("job_ref", help="Jenkins job 名称或唯一别称")
+    jobs_label.add_argument("job_name", help="完整 Jenkins job 名称（支持中文）")
     jobs_label.add_argument("label", choices=["test", "prod"], help="标签")
     jobs_label.add_argument("--json", action="store_true", help="输出 JSON")
     jobs_label.set_defaults(func=cmd_jobs_label)
 
     jobs_unlabel = jobs_subparsers.add_parser("unlabel", help="移除 job 标签")
-    jobs_unlabel.add_argument("job_ref", help="Jenkins job 名称或唯一别称")
+    jobs_unlabel.add_argument("job_name", help="完整 Jenkins job 名称（支持中文）")
     jobs_unlabel.add_argument("--json", action="store_true", help="输出 JSON")
     jobs_unlabel.set_defaults(func=cmd_jobs_unlabel)
 
-    jobs_alias = jobs_subparsers.add_parser("alias", help="管理 job 别称")
-    jobs_alias_subparsers = jobs_alias.add_subparsers(dest="jobs_alias_command", required=True)
-
-    jobs_alias_list = jobs_alias_subparsers.add_parser("list", help="列出 job 别称")
-    jobs_alias_list.add_argument("--json", action="store_true", help="输出 JSON")
-    jobs_alias_list.set_defaults(func=cmd_jobs_alias_list)
-
-    jobs_alias_add = jobs_alias_subparsers.add_parser("add", help="添加 job 别称")
-    jobs_alias_add.add_argument("job_ref", help="Jenkins job 名称或唯一别称")
-    jobs_alias_add.add_argument("alias", help="别称")
-    jobs_alias_add.add_argument("--json", action="store_true", help="输出 JSON")
-    jobs_alias_add.set_defaults(func=cmd_jobs_alias_add)
-
-    jobs_alias_rm = jobs_alias_subparsers.add_parser("rm", help="删除 job 别称")
-    jobs_alias_rm.add_argument("job_ref", help="Jenkins job 名称或唯一别称")
-    jobs_alias_rm.add_argument("alias", help="别称")
-    jobs_alias_rm.add_argument("--json", action="store_true", help="输出 JSON")
-    jobs_alias_rm.set_defaults(func=cmd_jobs_alias_rm)
+    jobs_desc = jobs_subparsers.add_parser("desc", help="设置 job 描述（空字符串清除）")
+    jobs_desc.add_argument("job_name", help="完整 Jenkins job 名称（支持中文）")
+    jobs_desc.add_argument("description", help="自然语言描述；传入空字符串清除")
+    jobs_desc.add_argument("--json", action="store_true", help="输出 JSON")
+    jobs_desc.set_defaults(func=cmd_jobs_desc)
 
     build_parser_ = subparsers.add_parser("build", help="触发构建")
-    build_parser_.add_argument("ref", nargs="?", help="Jenkins job 名称或唯一别称")
+    build_parser_.add_argument("--job", type=nonempty_value, help="完整 Jenkins job 名称；省略时交互选择")
+    build_parser_.add_argument("--branch", type=nonempty_value, help="先持久修改分支再构建；指定 --job 时省略则使用当前分支")
     build_parser_.add_argument("--follow", action="store_true", help="等待构建完成")
     build_parser_.add_argument("--json", action="store_true", help="输出 JSON")
     build_parser_.set_defaults(func=cmd_build)
 
     set_branch_parser = subparsers.add_parser("set-branch", help="修改 Jenkins Git Branch Specifier")
-    set_branch_parser.add_argument("ref", help="Jenkins job 名称或唯一别称")
-    set_branch_parser.add_argument("branch", help="目标分支名称")
+    set_branch_parser.add_argument("--job", type=nonempty_value, help="完整 Jenkins job 名称；省略时交互选择")
+    set_branch_parser.add_argument("--branch", type=nonempty_value, help="目标分支名称；省略时交互输入")
     set_branch_parser.add_argument("--json", action="store_true", help="输出 JSON")
     set_branch_parser.set_defaults(func=cmd_set_branch)
 
@@ -1434,7 +1374,10 @@ def main(argv: list[str] | None = None) -> int:
     except CLIError as exc:
         print(f"错误: {exc}", file=sys.stderr)
         return 1
-    except KeyboardInterrupt:
+    except OSError as exc:
+        print(f"错误: {exc}", file=sys.stderr)
+        return 1
+    except (KeyboardInterrupt, EOFError):
         print("已取消", file=sys.stderr)
         return 130
     return 0
