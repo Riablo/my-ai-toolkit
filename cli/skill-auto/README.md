@@ -19,7 +19,7 @@ skill-auto on ./skills/my-skill
 skill-auto off ~/.agents/skills/my-skill
 ```
 
-zsh 和 Fish 补全均支持在子命令后补全 skill 目录：
+zsh 补全支持在子命令后补全 skill 目录：
 
 ```bash
 skill-auto on <Tab>

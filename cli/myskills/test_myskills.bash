@@ -41,32 +41,6 @@ status_output="$("$tool" status)"
 help_output="$("$tool" --help)"
 [[ "$help_output" == *'list [--names]'* ]]
 
-if command -v fish >/dev/null 2>&1; then
-  fish --no-config -c '
-    set -g test_tool $argv[1]
-    set -g calls_file $argv[3]
-    function myskills
-        printf "%s\n" "$argv" >> "$calls_file"
-        command "$test_tool" $argv
-    end
-    source $argv[2]
-    set -l matches (complete -C "myskills link a")
-    contains -- alpha $matches; or exit 1
-    test (string join " " < "$calls_file") = "list --names"; or exit 1
-    printf "" > "$calls_file"
-    complete -C "myskills link alpha " >/dev/null
-    test ! -s "$calls_file"; or exit 1
-    complete -C "myskills link --h" >/dev/null
-    test ! -s "$calls_file"; or exit 1
-    set matches (complete -C "myskills link alpha --a")
-    string match -q -- "--agents*" $matches; or exit 1
-    set matches (complete -C "myskills list --n")
-    string match -q -- "--names*" $matches; or exit 1
-  ' -- "$tool" "$script_dir/myskills.fish" "$tmp_dir/fish-calls"
-else
-  printf '跳过 Fish 补全验证：未安装 fish\n'
-fi
-
 if command -v zsh >/dev/null 2>&1; then
   zsh -f -c '
     test_tool=$1

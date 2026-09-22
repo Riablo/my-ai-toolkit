@@ -51,7 +51,7 @@ pingcode-cli projects refresh
 ```
 
 配置只缓存项目的 `id`、`name`，刷新时不请求状态。旧配置中的 `states` 不再读取，
-下次 `projects refresh` 会移除它们。项目名称继续提供 zsh 与 Fish 自动补全，
+下次 `projects refresh` 会移除它们。项目名称继续提供 zsh 自动补全，
 仅在补全项目参数时读取缓存。
 
 每次命令会校验一次配置并共享鉴权快照；令牌刷新后，同一命令的后续请求会

@@ -15,8 +15,7 @@ skills/<skill-name>/references/  # 参考文档（可选）
 skills/<skill-name>/scripts/     # 辅助脚本（可选）
 cli/<tool-name>/<tool-name>      # CLI 可执行入口（必需）
 cli/<tool-name>/_<tool-name>     # zsh 补全（推荐）
-cli/<tool-name>/<tool-name>.fish # Fish Shell 补全（兼容）
-scripts/install.sh               # 安装脚本，软链 CLI 工具 + zsh/Fish 补全
+scripts/install.sh               # 安装脚本，软链 CLI 工具 + zsh 补全
 ```
 
 ## 约定
@@ -25,16 +24,15 @@ scripts/install.sh               # 安装脚本，软链 CLI 工具 + zsh/Fish �
 - 新 CLI 默认用 Bash 编写；已有 Python 入口或 Bash 包装的 Python/Node 实现沿用其结构，帮助信息用中文
 - 需要 bash 5.0+，可自由使用 nameref、readarray、关联数组等现代语法。macOS 自带 bash 3.2 不够用，需通过 Homebrew 升级（`brew install bash`）
 - 避免在 `set -e` 下用 `((expr)) && ((expr))` 模式，算术结果为 0 时退出码非零会导致脚本退出
-- 不要在 bash 脚本中做交互式 TUI（raw 模式按键监听），macOS/Fish 下兼容性差
+- 不要在 bash 脚本中做交互式 TUI（raw 模式按键监听），macOS 下兼容性差
 - Skill 目录必须包含 `SKILL.md`，install.sh 和 myskills 通过此文件识别 skill
 - Skill 默认只能由用户显式调用：`SKILL.md` frontmatter 必须设置 `disable-model-invocation: true`（Claude Code / Pi），`agents/openai.yaml` 必须设置 `policy.allow_implicit_invocation: false`（Codex）
 - 只有用户明确要求某个 skill 可被自动调用时，才移除或反转上述两项配置；两端配置必须保持一致
 - 更新已有 `agents/openai.yaml` 时保留其 `interface`、`dependencies` 等其他字段，只修改 `policy.allow_implicit_invocation`
 - CLI 工具目录下的同名文件即为入口（如 `cli/myskills/myskills`）
 - 安装方式：`bash scripts/install.sh`，软链接到 `~/.local/bin/`
-- 用户主要使用 zsh，CLI 工具应优先提供 zsh 补全文件 `_tool-name`
-- 兼顾 Fish Shell，已有或适合补充的 CLI 可继续提供 `.fish` 补全文件
-- zsh 补全安装到 `~/.zsh/completions/`，Fish 补全安装到 `~/.config/fish/completions/`（install.sh 自动判断或通过 `--shell` 指定）
+- CLI 工具只维护 zsh 补全文件 `_tool-name`
+- install.sh 将 zsh 补全安装到 `~/.zsh/completions/`
 - Skill 中的 Python 脚本统一使用 uv 执行（PEP 723 内联元数据，无需 requirements.txt）
 - Skill 的配置文件统一存放在 `~/.config/<skill-name>/` 目录下
 - Skill 若依赖配置文件，必须在每次执行时完成配置校验。已核实主命令在请求或写入前执行等价校验时，可直接调用主命令；否则先用自检入口或只读校验。配置不存在、必要字段缺失或值无效时，停止依赖该配置的操作并协助初始化或修复，不用默认值掩盖问题
@@ -51,6 +49,7 @@ scripts/install.sh               # 安装脚本，软链 CLI 工具 + zsh/Fish �
 
 | 改动范围 | 回归测试入口 |
 | --- | --- |
+| 安装脚本 | `bash scripts/test_install.bash` |
 | myskills / skill 分发 | `bash cli/myskills/test_myskills.bash` |
 | skill-auto / 调用策略 | `bash cli/skill-auto/test_skill_auto.bash` |
 | wt-land | `bash cli/wt-land/test_wt_land.bash` |

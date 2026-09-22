@@ -217,7 +217,6 @@ jenkins-builder-cli runs status "folder/test.frontend_build#123" --json
 - `set-branch` 只支持经典 Git job；遇到 Pipeline / Multibranch / 多个 Branch Specifier 时会拒绝执行
 - `logs --follow` 使用增量日志接口和服务端字节游标，后续轮询只获取新增日志，并在日志完成后退出；中文和 Jenkins 控制台注解不会导致游标错位
 - `logs --tail N --follow` 启动时连续读取已有日志的分页，只缓冲最后 N 行；追到空批次或日志完成后显示这 N 行，随后显示全部新增内容。首次仍需读取已有日志，之后不会重复下载；`--json` 仍输出完整日志和构建状态
-- Fish 只在 job 参数位置生成本地配置中的 job 名称候选（包括 `--job`），其他子命令位置不读取 jobs 配置
 
 ## 本地回归测试
 

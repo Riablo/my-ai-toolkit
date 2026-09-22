@@ -119,7 +119,6 @@ cos-cli ./photos --json                   # 结构化结果，等同 --format js
 uv run --with cos-python-sdk-v5==1.9.44 python -m unittest discover -s cli/cos-cli -p 'test_*.py' -v
 bash -n cli/cos-cli/cos-cli
 zsh -n cli/cos-cli/_cos-cli
-fish -n cli/cos-cli/cos-cli.fish
 ```
 
 测试使用临时配置与模拟 COS 响应，不访问真实存储桶。

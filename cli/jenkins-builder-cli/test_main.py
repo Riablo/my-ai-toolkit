@@ -90,24 +90,6 @@ class JenkinsBuilderCliTests(unittest.TestCase):
             proc.wait(timeout=5)
             os.close(master)
 
-    @unittest.skipUnless(shutil.which("fish"), "Fish is unavailable")
-    def test_fish_only_scans_jobs_at_the_job_argument(self) -> None:
-        source = Path(__file__).with_name("jenkins-builder-cli.fish").read_text()
-        source = source.replace('set -l cfg "$HOME/.config/jenkins-builder-cli/config.yaml"', 'set -l cfg "$JBC_TEST_CONFIG"')
-        source = source.replace('function __jbc_emit_configured_jobs\n', 'function __jbc_emit_configured_jobs\n    set -g JBC_TEST_SCANS (math $JBC_TEST_SCANS + 1)\n')
-        with tempfile.TemporaryDirectory(prefix="jenkins-completion-test-") as directory:
-            config_path = Path(directory) / "config.yaml"
-            config_path.write_text("jobs:\n  target:\n    label: test\n    description: chosen\n")
-            for command, expected in [("jobs ", 0), ("jobs list ", 0), ("build ", 0), ("build --json ", 0), ("build --job ", 1), ("build --branch main --job ", 1), ("set-branch --job ", 1), ("set-branch --branch ", 0), ("jobs desc ", 1), ("jobs label ", 1), ("jobs label target ", 0)]:
-                with self.subTest(command=command):
-                    script = source + f"\nset -g JBC_TEST_SCANS 0\ncomplete -C 'jenkins-builder-cli {command}' >/dev/null\necho $JBC_TEST_SCANS\n"
-                    result = subprocess.run(["fish", "--no-config", "-c", script], env={**os.environ, "JBC_TEST_CONFIG": str(config_path)}, capture_output=True, text=True, check=True)
-                    self.assertEqual(result.stdout.strip(), str(expected))
-            config_path.write_text("jobs:\n  文件夹/编辑器 with space:\n    label: prod\n    description: |\n      功能说明:\n        这里不是 job:\n  '123':\n    label: ''\n    description: ''\n")
-            script = source + "\nset -g JBC_TEST_SCANS 0\n__jbc_emit_configured_jobs\n"
-            result = subprocess.run(["fish", "--no-config", "-c", script], env={**os.environ, "JBC_TEST_CONFIG": str(config_path)}, capture_output=True, text=True, check=True)
-            self.assertEqual(result.stdout.splitlines(), ["文件夹/编辑器 with space\tJob · 正式服", "123\tJob · 未分类"])
-
     def make_config(self):
         config = MODULE.default_config()
         config["jenkins"].update(url="https://jenkins.example.com", username="mock", token="mock")

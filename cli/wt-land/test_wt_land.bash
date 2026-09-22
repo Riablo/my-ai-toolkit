@@ -56,15 +56,6 @@ for mode in worktree local; do
   else
     echo '跳过 zsh 补全验证：未安装 zsh'
   fi
-  if command -v fish >/dev/null 2>&1; then
-    completion="$(cd "$feature_worktree" && fish --no-config -c '
-      source $argv[1]
-      __wt_land_targets
-    ' -- "$script_dir/wt-land.fish")"
-    test "$completion" = $'foo\t'"$target_description"$'\nidle\t本地分支'
-  else
-    echo '跳过 Fish 补全验证：未安装 fish'
-  fi
 
   printf 'dirty\n' >"$feature_worktree/untracked.txt"
   if (cd "$feature_worktree" && "$script_dir/wt-land" foo >"$tmp_dir/out" 2>"$tmp_dir/err"); then
