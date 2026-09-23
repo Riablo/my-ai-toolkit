@@ -55,10 +55,10 @@ _pingcode-cli() {
         '--created-after[覆盖全局 created_at 起点]:Unix 秒数:'
       ;;
     bug|comments)
-      _arguments '(-h --help)'{-h,--help}'[显示帮助]' '1:bug id:'
+      _arguments '(-h --help)'{-h,--help}'[显示帮助]' '1:identifier:'
       ;;
     set-state)
-      _arguments '(-h --help)'{-h,--help}'[显示帮助]' '1:bug id:' \
+      _arguments '(-h --help)'{-h,--help}'[显示帮助]' '1:identifier:' \
         '--state[目标状态，省略时交互选择]:状态名称:(已拒绝 重新打开 已修复 新提交 挂起 已发布 处理中)'
       ;;
   esac

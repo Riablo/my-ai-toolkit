@@ -13,6 +13,7 @@ BUG_STATES=(
 )
 CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/pingcode-cli"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
+WORK_ITEM_ID_CACHE_TTL=604800 # 7 days in seconds
 RUNTIME_DIR=""
 
 init_runtime() {
@@ -354,6 +355,9 @@ fetch_paginated() {
     previous_count="$count"
     page=$((page + 1))
   done
+  if [ "$kind" = work_items ]; then
+    cache_work_item_ids_from_items "$items_file"
+  fi
   jq -s 'unique_by(.id)' "$items_file"
 }
 
@@ -531,29 +535,98 @@ cmd_bugs() {
   jq -s 'add // [] | unique_by(.id)' "$batches_file" | shape_bugs "$cutoff"
 }
 
-get_bug() {
-  [[ "$1" =~ ^[A-Za-z0-9_-]+$ ]] || die "无效的 bug id：$1"
-  api_request GET "/v1/project/work_items/$1" --get \
-    --data-urlencode 'include_public_image_token=description'
+validate_identifier() {
+  [[ "$1" =~ ^[A-Za-z0-9_-]+$ ]] || die "无效的 identifier：$1"
+}
+
+# Save mappings from any work-item list result. NDJSON input keeps large
+# descriptions out of the config update; one batch writes all pages at once.
+cache_work_item_ids_from_items() {
+  local mappings_file
+  mappings_file="$(mktemp "$RUNTIME_DIR/mappings.XXXXXX")"
+  jq -nc 'inputs |
+    select((.id | type == "string" and test("^[A-Za-z0-9_-]+$")) and
+      (.identifier | type == "string" and test("^[A-Za-z0-9_-]+$"))) |
+    {identifier, id}
+  ' "$1" > "$mappings_file" || die "无法读取工作项 ID 映射"
+  [ -s "$mappings_file" ] || return 0
+  write_config '
+    .work_item_ids = (
+      (.work_item_ids | if type == "object" then
+        with_entries(select(.value |
+          if type == "object" then
+            (.id | type == "string" and test("^[A-Za-z0-9_-]+$")) and
+            (.cached_at | type == "number" and . <= $now and . > $now - $ttl)
+          else false end
+        ))
+      else {} end) as $existing |
+      reduce $mappings[] as $item ($existing;
+        .[$item.identifier] = {id: $item.id, cached_at: $now})
+    )
+  ' --slurpfile mappings "$mappings_file" \
+    --argjson now "$EPOCHSECONDS" --argjson ttl "$WORK_ITEM_ID_CACHE_TTL"
+}
+
+# The list response contains the same fields used by shape_bug, including the
+# temporary image token. Require an exact, unique match before caching its ID.
+lookup_bug_by_identifier() {
+  local identifier="$1" response_file="$2" item_file
+  item_file="$(mktemp "$RUNTIME_DIR/item.XXXXXX")"
+  api_request GET '/v1/project/work_items' --get \
+    --data-urlencode 'include_public_image_token=description' \
+    --data-urlencode "identifier=${identifier}" > "$response_file"
+  jq -e --arg identifier "$identifier" '
+    if (.values | type) != "array" then error("响应缺少 values 数组") else . end |
+    if .total != null and .total != 1 then error("响应的工作项数量不是 1") else . end |
+    .values |
+    if length == 1 and .[0].identifier == $identifier and
+      (.[0].id | type == "string" and test("^[A-Za-z0-9_-]+$"))
+    then .[0] else error("未找到唯一工作项或缺少有效 ID") end
+  ' "$response_file" > "$item_file" || die "无法通过 identifier 找到唯一工作项：${identifier}"
+  cache_work_item_ids_from_items "$item_file"
+  jq -c '.' "$item_file"
+}
+
+resolve_bug_id() {
+  local identifier="$1" id response_file item_file
+  validate_identifier "$identifier"
+  id="$(jq -r --arg identifier "$identifier" --argjson now "$EPOCHSECONDS" \
+    --argjson ttl "$WORK_ITEM_ID_CACHE_TTL" '
+    (.work_item_ids | if type == "object" then .[$identifier] else null end) // {} |
+    if type != "object" then {} else . end |
+    if (.id | type == "string" and test("^[A-Za-z0-9_-]+$")) and
+      (.cached_at | type == "number" and . <= $now and . > $now - $ttl)
+    then .id else empty end
+  ' "$CONFIG_FILE")"
+  if [ -z "$id" ]; then
+    response_file="$(mktemp "$RUNTIME_DIR/response.XXXXXX")"
+    item_file="$(mktemp "$RUNTIME_DIR/item.XXXXXX")"
+    lookup_bug_by_identifier "$identifier" "$response_file" > "$item_file"
+    id="$(jq -r '.id' "$item_file")"
+  fi
+  printf '%s\n' "$id"
 }
 
 cmd_bug() {
-  [ "$#" -eq 1 ] || die "用法：pingcode-cli bug <bug_id>"
-  local bug_file comments_file
+  [ "$#" -eq 1 ] || die "用法：pingcode-cli bug <identifier>"
+  validate_identifier "$1"
+  local bug_file comments_file response_file item_file id
   bug_file="$(mktemp "$RUNTIME_DIR/bug.XXXXXX")"
   comments_file="$(mktemp "$RUNTIME_DIR/comments.XXXXXX")"
-  get_bug "$1" | shape_bug > "$bug_file"
+  response_file="$(mktemp "$RUNTIME_DIR/response.XXXXXX")"
+  item_file="$(mktemp "$RUNTIME_DIR/item.XXXXXX")"
+  lookup_bug_by_identifier "$1" "$response_file" > "$item_file"
+  id="$(jq -r '.id' "$item_file")"
+  jq -e '.' "$item_file" | shape_bug > "$bug_file"
   if [ "$(<"$bug_file")" = null ]; then
     printf 'null\n'
     return
   fi
-  cmd_comments "$1" > "$comments_file"
+  fetch_comments_by_id "$id" > "$comments_file"
   jq --slurpfile comments "$comments_file" '. + {comments: $comments[0]}' "$bug_file"
 }
 
-cmd_comments() {
-  [ "$#" -eq 1 ] || die "用法：pingcode-cli comments <bug_id>"
-  [[ "$1" =~ ^[A-Za-z0-9_-]+$ ]] || die "无效的 bug id：$1"
+fetch_comments_by_id() {
   # ponytail: 只取第一页；评论超过一页时再接入 fetch_paginated。
   api_request GET '/v1/comments' --get \
     --data-urlencode 'principal_type=workitem' --data-urlencode "principal_id=$1" \
@@ -562,11 +635,19 @@ cmd_comments() {
       [.values[] | select(.is_deleted != 1) | {id, content, created_by: (.created_by.display_name // "")}]'
 }
 
+cmd_comments() {
+  [ "$#" -eq 1 ] || die "用法：pingcode-cli comments <identifier>"
+  validate_identifier "$1"
+  local id
+  id="$(resolve_bug_id "$1")"
+  fetch_comments_by_id "$id"
+}
+
 cmd_set_state() {
-  [ "$#" -ge 1 ] || die "用法：pingcode-cli set-state <bug_id> [--state <状态名称>]"
-  local bug_id="$1" state_name="" state_id response
+  [ "$#" -ge 1 ] || die "用法：pingcode-cli set-state <identifier> [--state <状态名称>]"
+  local identifier="$1" bug_id state_name="" state_id response
   shift
-  [[ "$bug_id" =~ ^[A-Za-z0-9_-]+$ ]] || die "无效的 bug id：$bug_id"
+  validate_identifier "$identifier"
   while [ "$#" -gt 0 ]; do
     [ -z "$state_name" ] || die "--state 只能指定一次"
     case "$1" in
@@ -599,6 +680,7 @@ cmd_set_state() {
     done
   fi
   state_id="$(resolve_state_id "$state_name")"
+  bug_id="$(resolve_bug_id "$identifier")"
 
   response="$(api_request PATCH "/v1/project/work_items/${bug_id}" \
     -H 'Content-Type: application/json' \
@@ -669,9 +751,9 @@ pingcode-cli - 使用 PingCode 官方 API 管理 bug
   pingcode-cli doctor
   pingcode-cli projects [refresh]
   pingcode-cli bugs [--project <项目名称>] [--created-after <Unix 秒数>]
-  pingcode-cli bug <bug_id>
-  pingcode-cli comments <bug_id>
-  pingcode-cli set-state <bug_id> [--state <状态名称>]
+  pingcode-cli bug <identifier>
+  pingcode-cli comments <identifier>
+  pingcode-cli set-state <identifier> [--state <状态名称>]
 
 命令：
   config      初始化、脱敏查看配置、显示路径或设置日期起点
@@ -761,6 +843,7 @@ pingcode-cli bugs - 获取分配给我的 bug
   -h, --help                 显示帮助
 
 固定查询新提交和重新打开，过滤已归档或已删除的 bug；列表不请求评论。
+自动缓存查询到的所有有效 identifier 与内部 ID 映射（7 天），包括输出被过滤的项。
 EOF
 }
 
@@ -769,12 +852,12 @@ usage_bug() {
 pingcode-cli bug - 获取一个 bug
 
 用法：
-  pingcode-cli bug <bug_id>
+  pingcode-cli bug <identifier>
 
 参数：
-  bug_id  PingCode API 返回的工作项 id
+  identifier  工作项编号，如 720YUN-4764
 
-附带 comments 数组；已归档或已删除的 bug 返回 null。
+通过列表查询取得工作项，附带 comments 数组；已归档或已删除时返回 null。
 EOF
 }
 
@@ -783,8 +866,9 @@ usage_comments() {
 pingcode-cli comments - 获取 bug 评论
 
 用法：
-  pingcode-cli comments <bug_id>
+  pingcode-cli comments <identifier>
 
+identifier 首次解析为内部 ID，7 天内复用本地映射缓存。
 只请求第一页（最多 30 条），过滤 is_deleted = 1 的评论。
 输出数组，每条仅含 id、content、created_by（display_name）。
 EOF
@@ -795,12 +879,13 @@ usage_set_state() {
 pingcode-cli set-state - 修改 bug 状态
 
 用法：
-  pingcode-cli set-state <bug_id>
-  pingcode-cli set-state <bug_id> --state <状态名称>
+  pingcode-cli set-state <identifier>
+  pingcode-cli set-state <identifier> --state <状态名称>
 
+identifier 首次解析为内部 ID，7 天内复用配置文件中的映射缓存。
 省略 --state 时每行显示一个状态，输入编号后提交；直接回车或按 Ctrl-D 取消。
 可选状态：已拒绝、重新打开、已修复、新提交、挂起、已发布、处理中。
-状态 ID 固定在代码中，直接发送更新请求，不查询项目、bug 详情或状态列表。
+状态 ID 固定在代码中，不查询项目、bug 详情或状态列表。
 EOF
 }
 

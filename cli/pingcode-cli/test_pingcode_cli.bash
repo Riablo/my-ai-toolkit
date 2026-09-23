@@ -29,21 +29,34 @@ curl() {
         '{id:"bug-1",state:{name:$name},project:{id:"p1",name:"项目一"},extra:true}')"
       [[ "$MOCK_MODE" != patch-failure ]] || status=403
       ;;
-    *'/v1/project/work_items/bug-1'*)
-      [[ "$args" == *'include_public_image_token=description'* ]] || return 98
-      body='{"id":"bug-1","identifier":"P-1","title":"第一个","html_url":"https://example.test/P-1","state":{"id":"s1","name":"新提交"},"description":"<p>one</p><img src=\"https://files.test/one.png\">","public_image_token":"single-token","project":{"id":"p1","name":"项目一"},"assignee":{"display_name":"陈峥"},"created_by":{"display_name":"朱文锦"},"is_archived":0,"is_deleted":0,"extra":true}'
-      ;;
-    *'/v1/project/work_items/bug-archived'*) body='{"id":"bug-archived","is_archived":1}' ;;
-    *'/v1/project/work_items/bug-deleted'*) body='{"id":"bug-deleted","is_deleted":1}' ;;
     *'/v1/project/work_items'*)
-      [[ "$args" == *'assignee_id=me'* && "$args" == *'type_id=bug'* && "$args" == *'include_public_image_token=description'* ]] || return 98
+      [[ "$args" == *'include_public_image_token=description'* ]] || return 98
+      if [[ "$args" == *'identifier='* ]]; then
+        case "$args" in
+          *'identifier=P-1'*) body='{"total":1,"values":[{"id":"bug-1","identifier":"P-1","title":"第一个","html_url":"https://example.test/P-1","state":{"id":"s1","name":"新提交"},"description":"<p>one</p><img src=\"https://files.test/one.png\">","public_image_token":"single-token","project":{"id":"p1","name":"项目一"},"assignee":{"display_name":"陈峥"},"created_by":{"display_name":"朱文锦"},"is_archived":0,"is_deleted":0,"extra":true}]}' ;;
+          *'identifier=P-ARCHIVED'*) body='{"total":1,"values":[{"id":"bug-archived","identifier":"P-ARCHIVED","is_archived":1}]}' ;;
+          *'identifier=P-DELETED'*) body='{"total":1,"values":[{"id":"bug-deleted","identifier":"P-DELETED","is_deleted":1}]}' ;;
+          *'identifier=P-UNKNOWN'*) body='{"total":0,"values":[]}' ;;
+          *'identifier=P-MISMATCH'*) body='{"total":1,"values":[{"id":"bug-1","identifier":"P-1"}]}' ;;
+          *'identifier=P-DUPLICATE'*) body='{"total":2,"values":[{"id":"bug-1","identifier":"P-DUPLICATE"},{"id":"bug-2","identifier":"P-DUPLICATE"}]}' ;;
+          *) return 98 ;;
+        esac
+        case "$MOCK_MODE" in
+          invalid-list) body='{}' ;;
+          invalid-id) body='{"values":[{"id":"../bad","identifier":"P-1"}]}' ;;
+          invalid-total) body='{"total":2,"values":[{"id":"bug-1","identifier":"P-1"}]}' ;;
+        esac
+        printf '%s\n200' "$body"
+        return
+      fi
+      [[ "$args" == *'assignee_id=me'* && "$args" == *'type_id=bug'* ]] || return 98
       if [[ "$MOCK_MODE" == empty-bugs ]]; then
         printf '%s\n200' '{"total":0,"values":[]}'
         return
       fi
       case "$args" in
         *'project_id=p1'*'state_id=5f3a1c2fc2742c538a7dcbcb'*)
-          body='{"total":4,"values":[{"id":"bug-1","identifier":"P-1","title":"第一个","html_url":"https://example.test/P-1","state":{"id":"s1","name":"新提交"},"project":{"name":"项目一"},"assignee":{"display_name":"陈峥"},"created_by":{"display_name":"朱文锦"},"description":"<p>one</p><img src=\"https://files.test/one.png\">","public_image_token":"list-token-1","created_at":101,"is_archived":0,"is_deleted":0,"extra":true},{"id":"old","created_at":100},{"id":"archived","created_at":102,"is_archived":1},{"id":"deleted","created_at":102,"is_deleted":1}]}'
+          body='{"total":4,"values":[{"id":"bug-1","identifier":"P-1","title":"第一个","html_url":"https://example.test/P-1","state":{"id":"s1","name":"新提交"},"project":{"name":"项目一"},"assignee":{"display_name":"陈峥"},"created_by":{"display_name":"朱文锦"},"description":"<p>one</p><img src=\"https://files.test/one.png\">","public_image_token":"list-token-1","created_at":101,"is_archived":0,"is_deleted":0,"extra":true},{"id":"old","identifier":"P-OLD","created_at":100},{"id":"archived","identifier":"P-ARCHIVED","created_at":102,"is_archived":1},{"id":"deleted","identifier":"P-DELETED","created_at":102,"is_deleted":1}]}'
           ;;
         *'project_id=p1'*'state_id=5f3a1c2fc2742c17f27dcbce'*)
           body='{"total":1,"values":[{"id":"bug-2","identifier":"P-2","state":{"name":"重新打开"},"project":{"name":"项目一"},"assignee":null,"description":"<img src=\"https://files.test/two.png?size=large\">","public_image_token":"list-token-2","created_at":102}]}'
@@ -64,8 +77,14 @@ curl() {
       esac
       ;;
     *'/v1/comments'*)
-      [[ "$args" == *'principal_type=workitem'* && "$args" == *'principal_id=bug-1'* && "$args" == *'page_index=0'* && "$args" == *'page_size=30'* ]] || return 98
-      body='{"total":100,"values":[{"id":"c1","content":"有稳定复现方法吗？","created_by":{"display_name":"陈峥","id":"u1"},"is_deleted":0,"attachments":[]},{"id":"c2","content":"还是没有显示","created_by":{"display_name":"朱文锦"},"is_reply_comment":1,"replied_comment":{"id":"c1"}},{"id":"c3","content":"已删除","is_deleted":1}]}'
+      [[ "$args" == *'principal_type=workitem'* && "$args" == *'page_index=0'* && "$args" == *'page_size=30'* ]] || return 98
+      if [[ "$args" == *'principal_id=bug-1'* ]]; then
+        body='{"total":100,"values":[{"id":"c1","content":"有稳定复现方法吗？","created_by":{"display_name":"陈峥","id":"u1"},"is_deleted":0,"attachments":[]},{"id":"c2","content":"还是没有显示","created_by":{"display_name":"朱文锦"},"is_reply_comment":1,"replied_comment":{"id":"c1"}},{"id":"c3","content":"已删除","is_deleted":1}]}'
+      elif [[ "$args" == *'principal_id=bug-2'* || "$args" == *'principal_id=bug-3'* ]]; then
+        body='{"values":[]}'
+      else
+        return 98
+      fi
       case "$MOCK_MODE" in
         comments-failure) status=500 ;;
         invalid-response) body='{}' ;;
@@ -162,6 +181,11 @@ jq -e '
 ' <<< "$bugs" >/dev/null
 [[ "$(wc -l < "$TEST_DIR/requests.log")" -eq 2 ]]
 [[ "$(<"$TEST_DIR/requests.log")" != *'/v1/comments'* ]]
+jq -e '
+  .work_item_ids["P-1"].id == "bug-1" and .work_item_ids["P-2"].id == "bug-2" and
+  .work_item_ids["P-OLD"].id == "old" and .work_item_ids["P-ARCHIVED"].id == "archived" and
+  .work_item_ids["P-DELETED"].id == "deleted"
+' "$CONFIG_FILE" >/dev/null
 : > "$TEST_DIR/requests.log"
 all_bugs="$("$CLI" bugs)"
 jq -e 'map(.id) == ["bug-1","bug-2","bug-3"] and .[2].project == "项目二"' <<< "$all_bugs" >/dev/null
@@ -172,6 +196,17 @@ fi
 [[ "$(<"$TEST_DIR/requests.log")" != *'project_id='* ]]
 "$CLI" bugs --project=项目一 --created-after=101 | jq -e 'map(.id) == ["bug-2"]' >/dev/null
 "$CLI" bugs --created-after 999 | jq -e '. == []' >/dev/null
+jq -e '.work_item_ids["Q-1"].id == "bug-3"' "$CONFIG_FILE" >/dev/null
+for identifier in P-2 Q-1; do
+  : > "$TEST_DIR/requests.log"
+  "$CLI" comments "$identifier" | jq -e '. == []' >/dev/null
+  [[ "$(wc -l < "$TEST_DIR/requests.log")" -eq 1 ]]
+  [[ "$(<"$TEST_DIR/requests.log")" != *'/v1/project/work_items'* ]]
+done
+: > "$TEST_DIR/requests.log"
+"$CLI" set-state P-1 --state 已修复 | jq -e '.id == "bug-1" and .state == "已修复"' >/dev/null
+[[ "$(wc -l < "$TEST_DIR/requests.log")" -eq 1 ]]
+[[ "$(<"$TEST_DIR/requests.log")" == *'--request PATCH'* ]]
 expect_failure bugs --state 新提交
 expect_failure bugs --state=新提交
 expect_failure bugs --project=
@@ -179,11 +214,35 @@ expect_failure bugs --created-after=bad
 expect_failure bugs --project 不存在
 
 : > "$TEST_DIR/requests.log"
-comments="$("$CLI" comments bug-1)"
+comments="$("$CLI" comments P-1)"
 jq -e '. == [{id:"c1",content:"有稳定复现方法吗？",created_by:"陈峥"},{id:"c2",content:"还是没有显示",created_by:"朱文锦"}]' <<< "$comments" >/dev/null
 [[ "$(wc -l < "$TEST_DIR/requests.log")" -eq 1 ]]
+[[ "$(<"$TEST_DIR/requests.log")" != *'/v1/project/work_items'* ]]
+# If the mapping is missing, the identifier list request repopulates it.
+update_config 'del(.work_item_ids["P-1"])'
 : > "$TEST_DIR/requests.log"
-bug="$("$CLI" bug bug-1)"
+"$CLI" comments P-1 >/dev/null
+[[ "$(wc -l < "$TEST_DIR/requests.log")" -eq 2 ]]
+[[ "$(grep -c 'identifier=P-1' "$TEST_DIR/requests.log")" -eq 1 ]]
+jq -e '.work_item_ids["P-1"].id == "bug-1" and (.work_item_ids["P-1"].cached_at | type) == "number"' "$CONFIG_FILE" >/dev/null
+: > "$TEST_DIR/requests.log"
+"$CLI" comments P-1 | jq -e 'length == 2' >/dev/null
+[[ "$(wc -l < "$TEST_DIR/requests.log")" -eq 1 ]]
+# A mapping just under seven days old is still usable. Cache hits must not prune;
+# the next write removes expired, future-dated and malformed entries.
+update_config --argjson now "$EPOCHSECONDS" '
+  .work_item_ids["P-VALID"] = {id:"bug-1",cached_at:($now - 604800 + 120)} |
+  .work_item_ids["P-OLD"] = {id:"bug-old",cached_at:($now - 604800 - 120)} |
+  .work_item_ids["P-FUTURE"] = {id:"bug-future",cached_at:($now + 120)} |
+  .work_item_ids["P-BAD"] = "invalid"
+'
+cp "$CONFIG_FILE" "$TEST_DIR/before-cache-hit.json"
+: > "$TEST_DIR/requests.log"
+"$CLI" comments P-VALID | jq -e 'length == 2' >/dev/null
+[[ "$(wc -l < "$TEST_DIR/requests.log")" -eq 1 ]]
+cmp "$CONFIG_FILE" "$TEST_DIR/before-cache-hit.json"
+: > "$TEST_DIR/requests.log"
+bug="$("$CLI" bug P-1)"
 jq -e --argjson comments "$comments" '
   .id == "bug-1" and .state == "新提交" and .project == "项目一" and
   .assignee == "陈峥" and .created_by == "朱文锦" and .comments == $comments and
@@ -191,25 +250,39 @@ jq -e --argjson comments "$comments" '
   keys == ["assignee","comments","created_by","description","html_url","id","identifier","project","state","title"]
 ' <<< "$bug" >/dev/null
 [[ "$(wc -l < "$TEST_DIR/requests.log")" -eq 2 ]]
-for id in bug-archived bug-deleted; do
+[[ "$(grep -c 'identifier=P-1' "$TEST_DIR/requests.log")" -eq 1 ]]
+jq -e '.work_item_ids | (has("P-VALID") and has("P-1") and (has("P-OLD") | not) and (has("P-FUTURE") | not) and (has("P-BAD") | not))' "$CONFIG_FILE" >/dev/null
+[[ "$(stat -c '%a' "$CONFIG_FILE" 2>/dev/null || stat -f '%Lp' "$CONFIG_FILE")" = 600 ]]
+for id in P-ARCHIVED P-DELETED; do
   : > "$TEST_DIR/requests.log"
   [[ "$("$CLI" bug "$id")" == null ]]
   [[ "$(wc -l < "$TEST_DIR/requests.log")" -eq 1 ]]
 done
-MOCK_MODE=empty-comments "$CLI" comments bug-1 | jq -e '. == []' >/dev/null
-MOCK_MODE=empty-comments "$CLI" bug bug-1 | jq -e '.comments == []' >/dev/null
-MOCK_MODE=invalid-response expect_failure comments bug-1
-MOCK_MODE=empty-response expect_failure comments bug-1
-MOCK_MODE=comments-failure expect_failure bug bug-1
+MOCK_MODE=empty-comments "$CLI" comments P-1 | jq -e '. == []' >/dev/null
+MOCK_MODE=empty-comments "$CLI" bug P-1 | jq -e '.comments == []' >/dev/null
+MOCK_MODE=invalid-response expect_failure comments P-1
+MOCK_MODE=empty-response expect_failure comments P-1
+MOCK_MODE=comments-failure expect_failure bug P-1
 [[ ! -s "$TEST_DIR/output" ]]
+for identifier in P-UNKNOWN P-MISMATCH P-DUPLICATE; do
+  : > "$TEST_DIR/requests.log"
+  expect_failure bug "$identifier"
+  expect_failure comments "$identifier"
+  expect_failure set-state "$identifier" --state 已修复
+  [[ "$(grep -c 'identifier=' "$TEST_DIR/requests.log")" -eq 3 ]]
+  [[ "$(<"$TEST_DIR/requests.log")" != *'--request PATCH'* ]]
+done
+MOCK_MODE=invalid-list expect_failure bug P-1
+MOCK_MODE=invalid-id expect_failure bug P-1
+MOCK_MODE=invalid-total expect_failure bug P-1
 expect_failure comments '../bad'
 expect_failure comments
 
-# Every supported state goes directly to PATCH with its fixed ID.
+# A valid cache mapping skips the lookup; an expired one is refreshed before PATCH.
 cp "$CONFIG_FILE" "$TEST_DIR/before.json"
 while read -r state_name state_id; do
   : > "$TEST_DIR/requests.log"
-  updated="$(EXPECTED_STATE_ID="$state_id" EXPECTED_STATE_NAME="$state_name" "$CLI" set-state bug-1 --state "$state_name")"
+  updated="$(EXPECTED_STATE_ID="$state_id" EXPECTED_STATE_NAME="$state_name" "$CLI" set-state P-1 --state "$state_name")"
   jq -e --arg name "$state_name" '.id == "bug-1" and .state == $name and (has("extra") | not)' <<< "$updated" >/dev/null
   [[ "$(wc -l < "$TEST_DIR/requests.log")" -eq 1 ]]
   [[ "$(<"$TEST_DIR/requests.log")" == *'--request PATCH'* ]]
@@ -222,33 +295,51 @@ done <<'STATES'
 已发布 5f3a1c2fc2742cacfb7dcbcf
 处理中 5f3a1c2fc2742cef1d7dcbcc
 STATES
-"$CLI" set-state bug-1 --state=已修复 | jq -e '.state == "已修复"' >/dev/null
+"$CLI" set-state P-1 --state=已修复 | jq -e '.state == "已修复"' >/dev/null
 cmp "$CONFIG_FILE" "$TEST_DIR/before.json"
-jq -e 'all(.projects[]; has("states") | not)' "$CONFIG_FILE" >/dev/null
+update_config '.work_item_ids["P-1"].cached_at = 0'
+: > "$TEST_DIR/requests.log"
+"$CLI" set-state P-1 --state 已修复 | jq -e '.state == "已修复"' >/dev/null
+[[ "$(wc -l < "$TEST_DIR/requests.log")" -eq 2 ]]
+[[ "$(grep -c 'identifier=P-1' "$TEST_DIR/requests.log")" -eq 1 ]]
+update_config '.work_item_ids["P-1"].cached_at = 0'
+: > "$TEST_DIR/requests.log"
+"$CLI" comments P-1 >/dev/null
+[[ "$(wc -l < "$TEST_DIR/requests.log")" -eq 2 ]]
+update_config '.work_item_ids["P-1"].id = "../bad"'
+: > "$TEST_DIR/requests.log"
+"$CLI" comments P-1 >/dev/null
+[[ "$(wc -l < "$TEST_DIR/requests.log")" -eq 2 ]]
+jq -e '.work_item_ids["P-1"].id == "bug-1" and all(.projects[]; has("states") | not)' "$CONFIG_FILE" >/dev/null
+update_config '.work_item_ids = "invalid-cache"'
+: > "$TEST_DIR/requests.log"
+"$CLI" comments P-1 >/dev/null
+[[ "$(wc -l < "$TEST_DIR/requests.log")" -eq 2 ]]
+jq -e '.work_item_ids["P-1"].id == "bug-1"' "$CONFIG_FILE" >/dev/null
 
 # Invalid menu entries re-prompt; only the eventual selection sends a request.
 : > "$TEST_DIR/requests.log"
-updated="$(printf 'bad\n0\n8\n9\n3\n' | "$CLI" set-state bug-1 2> "$TEST_DIR/menu")"
+updated="$(printf 'bad\n0\n8\n9\n3\n' | "$CLI" set-state P-1 2> "$TEST_DIR/menu")"
 jq -e '.state == "已修复"' <<< "$updated" >/dev/null
 [[ "$(wc -l < "$TEST_DIR/requests.log")" -eq 1 ]]
 [[ "$(<"$TEST_DIR/menu")" == *'请输入 1–7'* ]]
 [[ "$(head -n 7 "$TEST_DIR/menu")" == $'1) 已拒绝\n2) 重新打开\n3) 已修复\n4) 新提交\n5) 挂起\n6) 已发布\n7) 处理中' ]]
 : > "$TEST_DIR/requests.log"
-printf '\n' | "$CLI" set-state bug-1 > "$TEST_DIR/output" 2> "$TEST_DIR/menu"
+printf '\n' | "$CLI" set-state P-1 > "$TEST_DIR/output" 2> "$TEST_DIR/menu"
 [[ ! -s "$TEST_DIR/output" && ! -s "$TEST_DIR/requests.log" ]]
 [[ "$(<"$TEST_DIR/menu")" == *'回车取消'* && "$(<"$TEST_DIR/menu")" != *'8)'* ]]
-expect_failure set-state bug-1
+expect_failure set-state P-1
 expect_failure set-state
 expect_failure set-state '../bad' --state 已修复
-expect_failure set-state bug-1 --state 不存在
+expect_failure set-state P-1 --state 不存在
 [[ "$(<"$TEST_DIR/error")" == *'不支持的状态'* ]]
-expect_failure set-state bug-1 --state
-expect_failure set-state bug-1 --state=
-expect_failure set-state bug-1 --state 已修复 --state 挂起
-expect_failure set-state bug-1 --unknown
-expect_failure set-state bug-1 已修复
+expect_failure set-state P-1 --state
+expect_failure set-state P-1 --state=
+expect_failure set-state P-1 --state 已修复 --state 挂起
+expect_failure set-state P-1 --unknown
+expect_failure set-state P-1 已修复
 [[ ! -s "$TEST_DIR/requests.log" ]]
-MOCK_MODE=patch-failure expect_failure set-state bug-1 --state 已修复
+MOCK_MODE=patch-failure expect_failure set-state P-1 --state 已修复
 [[ "$(<"$TEST_DIR/error")" == *'HTTP 403'* && ! -s "$TEST_DIR/output" ]]
 [[ "$(wc -l < "$TEST_DIR/requests.log")" -eq 1 ]]
 

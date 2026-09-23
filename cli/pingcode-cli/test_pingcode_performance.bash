@@ -78,6 +78,11 @@ done
 export TEST_MODE=large
 "$CLI" bugs --project 项目一 > "$TEST_DIR/bugs.json"
 command jq -e 'length == 1000 and all(.[]; (.description | length) == 2000)' "$TEST_DIR/bugs.json" >/dev/null
+command jq -e '
+  (.work_item_ids | length) == 1000 and
+  .work_item_ids["B-0"].id == "b0" and .work_item_ids["B-999"].id == "b999" and
+  (.work_item_ids["B-0"] | keys) == ["cached_at", "id"]
+' "$CONFIG_FILE" >/dev/null
 [[ "$(wc -l < "$TEST_DIR/pages.log")" -eq 10 ]]
 # Bound external JSON parsing independently of data volume: old code used 160+
 # jq processes here, including 100 repeated config/token parses.
@@ -96,11 +101,13 @@ printf 'ok: image processing runs only after filtering\n'
 
 export TEST_MODE=stalled
 : > "$TEST_DIR/pages.log"
+cp "$CONFIG_FILE" "$TEST_DIR/before-stalled.json"
 if "$CLI" bugs --project 项目一 > /dev/null 2> "$TEST_DIR/error"; then
   printf 'expected duplicate-page failure\n' >&2; exit 1
 fi
 [[ "$(wc -l < "$TEST_DIR/pages.log")" -eq 2 ]]
 [[ "$(<"$TEST_DIR/error")" == *'分页没有前进'* ]]
+cmp "$CONFIG_FILE" "$TEST_DIR/before-stalled.json"
 
 # A 401 while fetching the first state must update the shared token snapshot
 # used by the next state's request.

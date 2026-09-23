@@ -58,6 +58,15 @@ pingcode-cli projects refresh
 立即使用新令牌。分页响应使用临时文件累积，按 ID 检查分页是否前进，并在
 最后合并去重，避免大型描述触发系统命令行参数长度限制。临时文件在命令结束时清理。
 
+`bug`、`comments`、`set-state` 的入参是工作项 `identifier`（如 `720YUN-4764`），
+不再是 API 的内部 `id`。解析得到的 `{identifier: id}` 映射保存在同一配置文件的
+`work_item_ids` 中，权限随配置文件保持 `600`。映射有效期为 7 天，过期后使用时
+重新查询；每次写入新映射时顺便清理过期（及无效）映射，缓存命中时不主动清理。
+`bugs` 查询列表时会批量缓存所有页中具有有效 ID 和 identifier 的映射（包括输出中被
+时间、归档或删除条件过滤掉的项）；`bug` 和首次解析 identifier 时的列表请求也会写入同一缓存。
+已缓存的编号再用于 `comments` 或 `set-state` 时，无需再次请求工作项列表。
+`config init` 重建配置时清空映射。缓存仅用于解析 ID，不缓存工作项、评论或图片 token。
+
 ## Bug
 
 ```bash
@@ -70,23 +79,24 @@ pingcode-cli bugs --project '项目名称'
 # 临时覆盖全局 created_at 起点
 pingcode-cli bugs --project '项目名称' --created-after 1735689600
 
-# 获取单个 bug，附带 comments（参数是 API 返回的 id）
-pingcode-cli bug 5edca112b06305c524cad2fa
+# 获取单个 bug，附带 comments（参数是工作项 identifier）
+pingcode-cli bug 720YUN-4764
 
 # 独立获取评论
-pingcode-cli comments 5edca112b06305c524cad2fa
+pingcode-cli comments 720YUN-4764
 
 # 通过编号菜单选择状态
-pingcode-cli set-state 5edca112b06305c524cad2fa
+pingcode-cli set-state 720YUN-4764
 
-# 直接指定状态，一次完成
-pingcode-cli set-state 5edca112b06305c524cad2fa --state '已修复'
+# 直接指定状态
+pingcode-cli set-state 720YUN-4764 --state '已修复'
 ```
 
 `set-state` 使用代码内固定的七个状态：已拒绝、重新打开、已修复、新提交、挂起、
 已发布、处理中。省略 `--state` 时每行显示一个状态，输入编号并回车提交；
-直接回车或按 Ctrl-D 取消，不会修改状态。指定 `--state` 时无需交互选择；两种方式都直接发送更新请求，
-不再先查询 bug 详情、项目或状态列表。非法状态不会发送请求。
+直接回车或按 Ctrl-D 取消，不会修改状态。指定 `--state` 时无需交互选择；
+先用有效缓存或列表接口解析内部 ID，再发送更新请求，不查询单项详情、项目或状态列表。
+非法状态或取消时不会请求工作项或发送更新。
 
 `bugs` 固定按新提交（`5f3a1c2fc2742c538a7dcbcb`）、重新打开
 （`5f3a1c2fc2742c17f27dcbce`）两个状态查询分配给自己的 bug，不再接受 `--state`。
@@ -100,11 +110,14 @@ pingcode-cli set-state 5edca112b06305c524cad2fa --state '已修复'
 
 列表和单项查询先过滤已归档、已删除的 bug，列表再按 `created_at > 时间戳` 过滤，
 之后只为保留项的 `description` 图片 URL 拼接临时访问 token。token 随工作项 API
-响应返回，本地处理不会请求或下载图片。
+响应返回，本地处理不会请求或下载图片。`bug` 使用带 `identifier` 的列表查询直接
+生成详情（校验唯一且精确匹配），不再请求单项详情；同时缓存该列表的 ID 映射，
+再用返回的内部 ID 单独请求评论。
 
 `comments` 只请求第一页（30 条），返回过滤掉 `is_deleted = 1` 后的数组，每条只含
-`id`、`content`、`created_by`（display_name 字符串）。`bug` 将同一数组附加为
-`comments` 字段；评论请求失败会使整个命令失败，`bugs` 列表不请求评论。
+`id`、`content`、`created_by`（display_name 字符串）。独立运行 `comments` 时
+先解析内部 ID（缓存命中则省去列表请求）。`bug` 将同一数组附加为 `comments` 字段；
+评论请求失败会使整个命令失败，`bugs` 列表不请求评论。
 
 ## API 文档
 
