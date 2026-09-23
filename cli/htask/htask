@@ -1,0 +1,344 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+htask - 在 Herdr 中创建 worktree 并启动 Pi 或 Codex 任务
+
+用法:
+  htask [--repo 路径] [--base 分支名] --branch 分支 [--bug 编号]
+        [--agent pi|codex] [--model 预设名]
+        [--mode dev|submit] [--prompt 提示词]
+  htask                         交互式填写参数
+
+默认值:
+  --repo      当前目录所属 Git 仓库（外部脚本建议显式指定）
+  --base      所选仓库当前检出的分支名；优先刷新远端同名分支，否则使用本地分支
+  --agent     pi；--model 使用该 agent 的预设，省略时使用 agent 自身默认配置
+  --mode      无；不做额外处理
+
+--branch 必填；--prompt 和 --bug 至少提供一个。缺少必填项或无参数时交互询问，
+其余情况直接执行。交互时按回车接受默认值，或跳过可选项。
+--bug 将编号作为新分支名前缀（编号/分支名），并将脱敏后的 PingCode 描述放在用户补充提示词之前。
+TOML 配置（可选）：~/.config/htask/config.toml 与 <仓库根目录>/.config/htask/config.toml；
+项目配置覆盖全局配置。预设通过 --model <名称> 选取，例如 sol/xhigh。
+init 命令每次建树都会在新 worktree 的第二个 tab 执行；
+--mode dev 会在同一 tab 续跑 dev 命令。
+命令在 Bash 中运行，SOURCE_DIR 为原仓库路径；无配置或无对应命令时跳过第二个 tab。
+--mode submit 根据 origin 主机名识别 GitHub/GitLab，无法识别时停止；
+              授权 agent 完成后推送分支、创建 PR/MR；CLI 不直接推送。
+
+示例:
+  htask --branch fix-hotspot --bug 720YUN-4764 --prompt '优先修复拖动逻辑'
+  htask --repo /path/to/repo --base main --branch fix --agent pi \
+    --model sol/xhigh --mode submit --prompt '修复问题'
+EOF
+}
+
+die() { printf '错误：%s\n' "$1" >&2; exit 1; }
+need_command() { command -v "$1" >/dev/null 2>&1 || die "缺少依赖：$1"; }
+
+repo=""
+base=""
+branch=""
+agent=""
+model=""
+native_model=""
+thinking=""
+bug=""
+mode=""
+prompt=""
+repo_set=0
+base_set=0
+agent_set=0
+model_set=0
+bug_set=0
+mode_set=0
+prompt_set=0
+no_args=0
+[ "$#" -gt 0 ] || no_args=1
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --repo|--base|--branch|--agent|--model|--bug|--mode|--prompt)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || die "$1 需要非空参数"
+      case "$1" in
+        --repo) repo="$2"; repo_set=1 ;;
+        --base) base="$2"; base_set=1 ;;
+        --branch) branch="$2" ;;
+        --agent) agent="$2"; agent_set=1 ;;
+        --model) model="$2"; model_set=1 ;;
+        --bug) bug="$2"; bug_set=1 ;;
+        --mode) mode="$2"; mode_set=1 ;;
+        --prompt) prompt="$2"; prompt_set=1 ;;
+      esac
+      shift 2 ;;
+    *) die "未知选项：$1（使用 --help 查看帮助）" ;;
+  esac
+done
+
+ask() {
+  local label="$1" default="$2" required="${3:-0}" answer=""
+  if [ -n "$default" ]; then
+    printf '%s [%s]: ' "$label" "$default" >&2
+  elif [ "$required" -eq 1 ]; then
+    printf '%s: ' "$label" >&2
+  else
+    printf '%s（可留空）: ' "$label" >&2
+  fi
+  IFS= read -r answer || die '输入中断，未创建任务'
+  REPLY_RAW="$answer"
+  REPLY="${answer:-$default}"
+}
+
+interactive=0
+if [ "$no_args" -eq 1 ] || [ -z "$branch" ] || { [ "$prompt_set" -eq 0 ] && [ "$bug_set" -eq 0 ]; }; then
+  interactive=1
+  [ -t 0 ] || die '缺少必填项且标准输入不是终端；请传入 --branch，以及 --prompt 或 --bug'
+fi
+need_command herdr
+
+need_command git
+need_command jq
+need_command python3
+if [ "$repo_set" -eq 0 ]; then
+  repo="$PWD"
+  if [ "$interactive" -eq 1 ]; then
+    ask '仓库路径' "$repo"
+    repo="$REPLY"
+  fi
+fi
+repo="$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null)" || die "路径不是 Git 仓库：$repo"
+
+script_dir="$(dirname "$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}")")"
+config_root="${XDG_CONFIG_HOME:-$HOME/.config}/htask"
+config_file="$repo/.config/htask/config.toml"
+config_json="$(python3 "$script_dir/config.py" "$config_root/config.toml" "$config_file")" || die '配置加载失败；尚未创建 worktree'
+
+if [ "$base_set" -eq 0 ]; then
+  base="$(git -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  if [ "$interactive" -eq 1 ]; then
+    if [ -z "$base" ]; then
+      while [ -z "$base" ]; do ask '起点分支 --base' '' 1; base="$REPLY"; done
+    else
+      ask '起点分支 --base' "$base"
+      base="$REPLY"
+    fi
+  fi
+fi
+[ -n "$base" ] || die '当前仓库处于 detached HEAD，请指定 --base'
+
+if [ "$interactive" -eq 1 ]; then
+  if [ "$bug_set" -eq 0 ]; then ask 'PingCode bug 编号 --bug' ''; bug="$REPLY"; fi
+  while [ -z "$branch" ]; do ask '新分支名 --branch' '' 1; branch="$REPLY"; done
+  if [ "$agent_set" -eq 0 ]; then
+    ask 'Agent --agent (pi/codex)' 'pi'
+    agent="$REPLY"
+  fi
+  case "$agent" in pi|codex) ;; *) die '--agent 仅支持 pi 或 codex' ;; esac
+  if [ "$model_set" -eq 0 ]; then
+    readarray -t preset_names < <(jq -r --arg agent "$agent" '.models[$agent] | keys_unsorted[]' <<< "$config_json")
+    if [ "${#preset_names[@]}" -gt 0 ]; then
+      printf '模型预设 --model（%s；回车使用自身默认配置）：\n' "$agent" >&2
+      for i in "${!preset_names[@]}"; do printf '  %d) %s\n' "$((i + 1))" "${preset_names[$i]}" >&2; done
+      while :; do
+        printf '选择 [默认]: ' >&2
+        IFS= read -r answer || die '输入中断，未创建任务'
+        [ -n "$answer" ] || break
+        selected=0
+        for i in "${!preset_names[@]}"; do
+          if [ "$answer" = "$((i + 1))" ]; then model="${preset_names[$i]}"; selected=1; break; fi
+        done
+        [ "$selected" -eq 0 ] || break
+        printf '无效的序号，请重新选择。\n' >&2
+      done
+    fi
+  fi
+  if [ "$mode_set" -eq 0 ]; then ask '模式 --mode (dev/submit)' ''; mode="$REPLY"; fi
+  if [ "$prompt_set" -eq 0 ]; then
+    if [ -n "$bug" ]; then
+      ask '提示词 --prompt' ''
+      prompt="$REPLY"
+    else
+      while [ -z "$prompt" ]; do ask '提示词 --prompt' '' 1; prompt="$REPLY"; done
+    fi
+  fi
+fi
+
+[ -n "$branch" ] || die '--branch 不能为空'
+[ -n "$bug" ] || [ -n "$prompt" ] || die '--prompt 和 --bug 至少需要一个'
+agent="${agent:-pi}"
+case "$agent" in pi|codex) ;; *) die '--agent 仅支持 pi 或 codex' ;; esac
+case "$mode" in ''|dev|submit) ;; *) die '--mode 仅支持 dev 或 submit' ;; esac
+if [ -n "$model" ]; then
+  native_model="$(jq -er --arg agent "$agent" --arg alias "$model" '.models[$agent][$alias].model // empty' <<< "$config_json")" || die "${agent} 没有模型预设：${model}；请检查 config.toml"
+  thinking="$(jq -r --arg agent "$agent" --arg alias "$model" '.models[$agent][$alias].thinking // empty' <<< "$config_json")"
+fi
+if [ -n "$bug" ]; then
+  [[ "$bug" =~ ^[[:alnum:]]+-[0-9]+$ ]] || die '无效的 PingCode bug 编号'
+  branch="${bug}/${branch}"
+fi
+git check-ref-format --branch "$branch" >/dev/null 2>&1 || die "无效的分支名：$branch"
+
+# Bare names prefer a fresh origin branch; an explicit origin/name requires it.
+force_remote=0
+case "$base" in
+  origin) die '请填写具体分支名，而非 origin' ;;
+  origin/*) base_name="${base#origin/}"; force_remote=1 ;;
+  *) base_name="$base" ;;
+esac
+git check-ref-format --branch "$base_name" >/dev/null 2>&1 || die "无效的起点分支名：$base"
+remote="$(git -C "$repo" remote get-url origin 2>/dev/null || true)"
+base_source=""
+if [ -n "$remote" ]; then
+  if remote_refs="$(GIT_TERMINAL_PROMPT=0 git -C "$repo" ls-remote --exit-code --heads origin "refs/heads/$base_name" 2>/dev/null)"; then
+    if awk -F '\t' -v ref="refs/heads/$base_name" '$2 == ref { found=1 } END { exit !found }' <<< "$remote_refs"; then
+      GIT_TERMINAL_PROMPT=0 git -C "$repo" fetch --no-tags origin "+refs/heads/$base_name:refs/remotes/origin/$base_name" || die "无法刷新远端分支 origin/${base_name}；未使用本地旧版本"
+      base_source=remote
+      base="refs/remotes/origin/$base_name"
+      base_label="origin/$base_name"
+    fi
+  else
+    status=$?
+    [ "$status" -eq 2 ] || die "无法查询 origin 上的 ${base_name}；未回退到本地分支（请检查网络或认证）"
+  fi
+fi
+if [ -z "$base_source" ]; then
+  [ "$force_remote" -eq 0 ] || die "origin 上没有分支：$base_name"
+  git -C "$repo" show-ref --verify --quiet "refs/heads/$base_name" || die "远端和本地都没有分支：$base_name"
+  base_source=local
+  base="refs/heads/$base_name"
+  base_label="${base_name}（本地）"
+fi
+
+platform=""
+target_branch=""
+if [ "$mode" = submit ]; then
+  [ -n "$remote" ] || die 'submit 模式需要 origin 远程仓库'
+  [ "$base_source" = remote ] || die "submit 的目标分支 origin/$base_name 不存在；不能向仅本地分支发起 PR/MR"
+  host=""
+  if [[ "$remote" =~ ^[^@/:]+@([^:/]+): ]]; then
+    host="${BASH_REMATCH[1]}"
+  elif [[ "$remote" =~ ^(ssh|https?)://([^/]+) ]]; then
+    host="${BASH_REMATCH[2]##*@}"
+    host="${host%%:*}"
+  fi
+  [ -n "$host" ] || die 'submit 模式需要 GitHub/GitLab 网络 origin，本地路径或 file:// 不可用'
+  case "${host,,}" in
+    *github*) platform=github ;;
+    *gitlab*) platform=gitlab ;;
+  esac
+  [ -n "$platform" ] || die "无法从 origin 主机 ${host} 识别 GitHub/GitLab；请检查 origin 地址"
+  target_branch="$base_name"
+  if [ "$platform" = github ]; then need_command gh; else need_command glab; fi
+fi
+
+need_command openssl
+if [ -n "$bug" ]; then need_command pingcode-cli; fi
+
+init_cmds=()
+dev_cmds=()
+setup_cmds=()
+readarray -d '' -t init_cmds < <(jq -j '.init[] | . + "\u0000"' <<< "$config_json")
+readarray -d '' -t dev_cmds < <(jq -j '.dev[] | . + "\u0000"' <<< "$config_json")
+setup_cmds=("${init_cmds[@]}")
+if [ "$mode" = dev ]; then setup_cmds+=("${dev_cmds[@]}"); fi
+
+# HTML 正文转为可读文本；图片使用 PingCode 转换后的首个 src，保留完整 URL。
+# 工单链接与图片链接不改写，因此可能含访问参数；仅对描述文本尽力过滤凭据。
+if [ -n "$bug" ]; then
+  bug_json="$(pingcode-cli bug "$bug")" || die "查询 PingCode bug 失败：${bug}；尚未创建 worktree"
+  bug_text="$(jq -er --arg id "$bug" '
+    def images:
+      if type != "string" then [] else
+        [scan("(?i)<img[^>]*?\\ssrc=\\\"(https?://[^\\\"]+)\\\"") | .[0]] | unique
+      end;
+    def clean:
+      if type != "string" then "" else
+        gsub("(?i)<br\\s*/?>|</(p|div|li)>"; "\n") |
+        gsub("<[^>]*>"; "") |
+        gsub("&nbsp;"; " ") | gsub("&amp;"; "&") |
+        gsub("(?i)(账号密码|密码|password|token|secret|authorization|cookie|api[_ -]?key)[^\n]*"; "[已省略疑似凭据]")
+      end;
+    def line($label; $value): if $value == "" then "" else "\n\($label)：\($value)" end;
+    select(type == "object" and .identifier == $id and (.title | type == "string" and length > 0)) |
+    "请修复以下 PingCode Bug：\n编号：\(.identifier)" +
+      line("标题"; (.title | clean)) + line("项目"; (.project | clean)) +
+      line("状态"; (.state | clean)) + line("链接"; (.html_url | if type == "string" then . else "" end)) +
+      line("描述"; (.description | clean)) +
+      line("图片地址"; ((.description | images) | join("\n"))) +
+      line("评论"; ((.comments // []) | if type == "array" then map("- \(.content | clean)") | join("\n") else "" end))
+  ' <<< "$bug_json")" || die "PingCode 返回的 bug 内容无效：${bug}；尚未创建 worktree"
+  full_prompt="$bug_text"
+  if [ -n "$prompt" ]; then
+    full_prompt+=$'\n\n用户补充要求（与基础描述冲突时，以此为准）：\n'
+    full_prompt+="$prompt"
+  fi
+else
+  full_prompt="$prompt"
+fi
+
+if [ "$mode" = submit ]; then
+  if [ "$platform" = github ]; then
+    review_cmd='gh pr create --base <目标分支> --head <当前分支> --title <标题> --body <描述>'
+    review_name='PR'
+  else
+    review_cmd='glab mr create --source-branch <当前分支> --target-branch <目标分支> --title <标题> --description <描述> --yes'
+    review_name='MR'
+  fi
+  full_prompt+=$'\n\n交付要求：完成上述任务后，先运行相关测试、检查改动，并提交到当前任务分支。确认 origin 上的目标分支存在且具备发布权限，再推送当前任务分支到 origin。目标分支：'
+  full_prompt+="${target_branch}。使用 ${review_cmd} 创建 ${review_name}，将占位符替换为实际值。"
+  if [ -n "$bug" ]; then
+    full_prompt+="标题必须包含 ${bug}。"
+  fi
+  full_prompt+='请在描述中概述改动及验证结果；失败时报告原因，不要假称已发布。只使用项目已配置的认证，不要自行登录或修改凭据。'
+fi
+
+printf '创建 Herdr worktree：%s（基于 %s）\n' "$branch" "$base_label" >&2
+result="$(herdr worktree create --cwd "$repo" --branch "$branch" --base "$base" --focus)" || die '创建 worktree 失败，尚未启动 agent'
+pane="$(jq -er '.result.root_pane.pane_id | select(type == "string" and length > 0)' <<< "$result")" || die 'worktree 已创建，但无法读取 root_pane.pane_id；请手动检查 Herdr 状态'
+
+setup_pane=""
+if [ "${#setup_cmds[@]}" -gt 0 ]; then
+  workspace="$(jq -er '.result.workspace.workspace_id | select(type == "string" and length > 0)' <<< "$result")" || die 'worktree 已创建，但无法读取 workspace_id；请手动检查 Herdr 状态'
+  worktree_dir="$(jq -er '.result.worktree.path | select(type == "string" and length > 0)' <<< "$result")" || die 'worktree 已创建，但无法读取 worktree.path；项目命令和 agent 尚未启动'
+  [ -d "$worktree_dir" ] || die "worktree 已创建，但目录不存在：$worktree_dir"
+
+  tab_label=Setup
+  if [ "$mode" = dev ]; then tab_label=Dev; fi
+  tab_result="$(herdr tab create --workspace "$workspace" --cwd "$worktree_dir" --label "$tab_label" --no-focus)" || die 'worktree 已创建，但项目命令 tab 创建失败；agent 尚未启动'
+  setup_pane="$(jq -er '.result.root_pane.pane_id | select(type == "string" and length > 0)' <<< "$tab_result")" || die '项目命令 tab 已创建，但无法读取 pane ID；agent 尚未启动'
+
+  setup_script=$'set -Ee\ntrap "echo htask：项目命令失败 >&2" ERR\n'
+  printf -v setup_env 'export SOURCE_DIR=%q WORKTREE_DIR=%q\n' "$repo" "$worktree_dir"
+  setup_script+="$setup_env"
+  for cmd in "${init_cmds[@]}"; do setup_script+="$cmd"$'\n'; done
+  if [ "${#init_cmds[@]}" -gt 0 ]; then setup_script+=$'printf "htask：初始化完成\\n"\n'; fi
+  if [ "$mode" = dev ]; then
+    for cmd in "${dev_cmds[@]}"; do setup_script+="$cmd"$'\n'; done
+  fi
+  printf -v setup_launch 'bash -c %q' "$setup_script"
+  herdr pane run "$setup_pane" "$setup_launch" >/dev/null || die "worktree 和项目命令 tab 已创建（pane: ${setup_pane}），但命令提交失败；请检查 tab，勿盲目重发"
+  if [ "${#init_cmds[@]}" -gt 0 ]; then
+    full_prompt+=$'\n\n环境初始化正在另一个 tab 执行；需要依赖或环境文件时，先确认初始化完成。'
+  fi
+fi
+
+agent_name="agent-$(openssl rand -hex 8)"
+agent_args=()
+if [ "$agent" = pi ]; then
+  if [ -n "$native_model" ]; then
+    agent_args+=(--provider "${native_model%%/*}" --model "${native_model#*/}")
+  fi
+  if [ -n "$thinking" ]; then agent_args+=(--thinking "$thinking"); fi
+else
+  if [ -n "$native_model" ]; then agent_args+=(-m "$native_model"); fi
+  if [ -n "$thinking" ]; then agent_args+=(-c "model_reasoning_effort=\"${thinking}\""); fi
+fi
+start_args=(agent start "$agent_name" --kind "$agent" --pane "$pane")
+if [ "${#agent_args[@]}" -gt 0 ]; then start_args+=(-- "${agent_args[@]}"); fi
+herdr "${start_args[@]}" >/dev/null || die "worktree 已创建（pane: ${pane}），但 agent 启动失败；请手动检查，未发送提示词"
+herdr agent prompt "$pane" "$full_prompt" >/dev/null || die "agent 已启动（pane: ${pane}），但提示词提交失败；先检查 agent 状态，勿盲目重发"
+printf '任务已启动：%s（%s，pane: %s）\n' "$branch" "$agent" "$pane"
+if [ -n "$setup_pane" ]; then printf '项目命令已派发至第二个 tab（pane: %s），执行结果请在该 tab 查看。\n' "$setup_pane"; fi

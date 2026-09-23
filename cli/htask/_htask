@@ -1,0 +1,19 @@
+#compdef htask
+
+_htask() {
+  local -a opts
+  opts=(
+    '(-h --help)'{-h,--help}'[显示帮助]'
+    '--repo[Git 仓库目录]:仓库目录:_files -/'
+    '--base[起点分支名（先查远端，再查本地）]:分支名:'
+    '--branch[新分支名（有 bug 时自动附加编号）]:分支名:'
+    '--bug[PingCode bug 编号（新分支前缀）]:bug 编号:'
+    '--agent[Agent 类型，默认 pi]:Agent:(pi codex)'
+    '--model[已配置的模型预设名]:预设名:'
+    '--mode[任务模式]:模式:(dev submit)'
+    '--prompt[任务提示词]:提示词:'
+  )
+  _arguments -s "${opts[@]}"
+}
+
+_htask "$@"

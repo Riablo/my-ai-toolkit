@@ -1,0 +1,6 @@
+interface:
+  display_name: "Htask"
+  short_description: "通过 Herdr worktree 委派 Pi/Codex 任务"
+  default_prompt: "Use $htask to create the requested Herdr worktree task; confirm the repository, base, and publication scope before running it."
+policy:
+  allow_implicit_invocation: false
