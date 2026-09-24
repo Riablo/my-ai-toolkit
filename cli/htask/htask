@@ -20,6 +20,7 @@ htask - 在 Herdr 中创建 worktree 并启动 Pi 或 Codex 任务
 --branch 必填；--prompt 和 --bug 至少提供一个。缺少必填项或无参数时交互询问，
 其余情况直接执行。交互时按回车接受默认值，或跳过可选项。
 --bug 将编号作为新分支名前缀（编号/分支名），并将脱敏后的 PingCode 描述放在用户补充提示词之前。
+任务启动且提示词送达后，调用 pingcode-cli set-state <编号> --state 处理中。
 TOML 配置（可选）：~/.config/htask/config.toml 与 <仓库根目录>/.config/htask/config.toml；
 项目配置覆盖全局配置。预设通过 --model <名称> 选取，例如 sol/xhigh。
 可选 [iteration_prompts] 按 --base 分支名精确匹配迭代背景，置于具体任务之前。
@@ -378,3 +379,11 @@ herdr "${start_args[@]}" >/dev/null || die "worktree 已创建（pane: ${pane}�
 herdr agent prompt "$pane" "$full_prompt" >/dev/null || die "agent 已启动（pane: ${pane}），但提示词提交失败；先检查 agent 状态，勿盲目重发"
 printf '任务已启动：%s（%s，pane: %s）\n' "$branch" "$agent" "$pane"
 if [ -n "$setup_pane" ]; then printf '项目命令已派发至第二个 tab（pane: %s），执行结果请在该 tab 查看。\n' "$setup_pane"; fi
+if [ -n "$bug" ]; then
+  if pingcode-cli set-state "$bug" --state '处理中' >/dev/null; then
+    printf 'PingCode Bug %s 已更新为处理中。\n' "$bug"
+  else
+    printf '警告：任务已启动（pane: %s），但 PingCode Bug %s 状态更新失败；请先核对当前状态，必要时手动执行 pingcode-cli set-state %s --state 处理中；不要重新执行 htask。\n' "$pane" "$bug" "$bug" >&2
+    exit 1
+  fi
+fi

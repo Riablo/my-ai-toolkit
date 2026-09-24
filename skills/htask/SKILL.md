@@ -18,6 +18,7 @@ disable-model-invocation: true
 ## 选参时的联动
 
 - **Bug 与提示词：** `--bug` 让 CLI 自行查询 `pingcode-cli bug`，把编号作为分支前缀（`编号/分支名`），并将工单文字、评论及图片地址放在用户补充要求之前；用户补充要求冲突时优先。无 bug 时，`--prompt` 就是主任务提示词。传给 `--branch` 的是**未加 bug 前缀**的名字，不要提前拼接；也不必重复查询工单再把原始 JSON/HTML 塞进 `--prompt`。CLI 对正文疑似凭据的过滤是尽力而为，**工单与图片的完整链接（包括查询参数）会交给 agent**；敏感工单应先审查再发送。
+- **PingCode 状态：** 只有传入 `--bug` 且任务已启动、提示词送达，CLI 才将状态更新为「处理中」。若更新失败而任务已启动，先核对状态，必要时仅重试 `pingcode-cli set-state`，不要重跑 `htask`。
 - **Agent 与模型：** 默认 agent 为 Pi；`--model` 仅接受该 agent 的 TOML 预设名（如 `sol/xhigh`），会转换为原生模型/强度参数。省略 `--model` 时沿用 Pi/Codex 自身配置；无预设的交互模式不会问模型。用户指定原生 ID 或强度时先核对配置中的预设，未经同意不替用户添加配置或猜测 ID；显式传入未配置的预设须报错。CLI 已移除 `--thinking`，也不自行重复启动 agent 或发送提示词。
 - **配置与 dev：** 可选全局 `~/.config/htask/config.toml`（或 `$XDG_CONFIG_HOME/htask/config.toml`）和源仓库 `.config/htask/config.toml` 均使用 `schema_version = 1`；项目的 `init`/`dev` 各自覆盖全局同名数组，具名 `dev_profiles` 按名称整组覆盖，模型预设逐项覆盖。旧 JSON 尚存或 TOML 格式无效时 CLI 会在建树前停止，协助迁移或修复。CLI 在新 worktree 的第二个 tab 先执行 `init`；dev 模式交互选择启动方案，脚本不传 `--dev-profile` 使用默认 `dev`，传入名称则只运行该方案。未知名称在建树前报错；不从 bug 或路径猜 App。`SOURCE_DIR` 为源仓库根目录。配置含 shell 命令，先确认来源可信。命令只是异步派发；检查第二个 tab 后才能报告初始化或服务已完成。配置示例见随 CLI 发布的 README。
 - **迭代背景：** 可选 `iteration_prompts` 以起点分支名为键，项目配置按键覆盖全局；完全匹配时放在具体任务之前，未匹配则不追加。背景仅供定位，具体工单和用户要求优先；不要因此断定任务只能修改其中提到的 App。
@@ -25,5 +26,5 @@ disable-model-invocation: true
 
 ## 完成与故障
 
-- `htask` 成功表示已创建 worktree、启动 agent 并提交提示词；若项目有命令配置，也只是将命令提交到了第二个 tab。记录 agent pane 和项目命令 pane，向用户报告「任务已启动、初始化已派发」，而非「依赖已安装、服务已启动/PR 已完成」。新 worktree 仍聚焦 agent 所在 tab。若用户要求跟到交付完成，从 `PATH` 定位 `herdr`，用 `herdr agent get <pane-id>` / `herdr agent read <pane-id> --source recent-unwrapped --lines 120` 跟踪，并检查第二个 tab 的 `herdr pane read <pane-id> --source recent-unwrapped --lines 120` 及远端 PR/MR 实际结果。
+- `htask` 成功表示已创建 worktree、启动 agent 并提交提示词；传入 `--bug` 时也已更新 PingCode 状态。若项目有命令配置，也只是将命令提交到了第二个 tab。记录 agent pane 和项目命令 pane，向用户报告「任务已启动、初始化已派发」，而非「依赖已安装、服务已启动/PR 已完成」。新 worktree 仍聚焦 agent 所在 tab。若用户要求跟到交付完成，从 `PATH` 定位 `herdr`，用 `herdr agent get <pane-id>` / `herdr agent read <pane-id> --source recent-unwrapped --lines 120` 跟踪，并检查第二个 tab 的 `herdr pane read <pane-id> --source recent-unwrapped --lines 120` 及远端 PR/MR 实际结果。
 - 创建前远端查询、配置校验或 PingCode 查询失败时先处理错误。缺少可选 htask 配置时沿用 agent 默认值；已存在但无效的配置须修复后再试。PingCode 鉴权失败按 `pingcode-cli` 的诊断/初始化指引协助修复；配置参数须由用户提供或同意，不从示例猜值。创建 worktree 后若命令 tab 创建失败或 agent 启动失败，worktree 会保留；若项目命令或提示词提交失败，可能已经发送。用返回的 pane ID 检查实际状态后再决定恢复方式，不直接重跑 `htask`、删除 worktree 或盲目重发命令。`submit` 发布结果不明时先查远端已有 PR/MR，避免重复创建。

@@ -6,7 +6,7 @@ tmp="$(mktemp -d)"
 trap 'if [ "${HTASK_KEEP_TMP:-0}" = 1 ]; then printf "测试目录：%s\n" "$tmp" >&2; else rm -rf "$tmp"; fi' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_EDITOR=true
 export HERDR_ENV=1
-export HTASK_TEST_LOG="$tmp/calls.jsonl" XDG_CONFIG_HOME="$tmp/config"
+export HTASK_TEST_LOG="$tmp/calls.jsonl" HTASK_TEST_EVENTS="$tmp/events.log" XDG_CONFIG_HOME="$tmp/config"
 mkdir -p "$tmp/bin" "$tmp/repo with spaces" "$XDG_CONFIG_HOME/htask"
 repo="$(cd "$tmp/repo with spaces" && pwd -P)"
 git init -q -b main "$repo"
@@ -40,6 +40,7 @@ chmod +x "$tmp/bin/git"
 cat > "$tmp/bin/herdr" <<'EOF'
 #!/usr/bin/env bash
 jq -cn --args '$ARGS.positional' -- "$@" >> "$HTASK_TEST_LOG"
+printf 'herdr %s %s\n' "$1" "$2" >> "$HTASK_TEST_EVENTS"
 case "$1 $2" in
   'worktree create') [ "${HTASK_FAIL:-}" != create ] || exit 1
     if [ -f "$HTASK_TEST_REPO/.config/htask/config.toml" ] && [ "${HTASK_FAIL:-}" != missing-pane ]; then
@@ -65,6 +66,13 @@ EOF
 cat > "$tmp/bin/pingcode-cli" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$HTASK_BUG_LOG"
+printf 'pingcode %s\n' "$*" >> "$HTASK_TEST_EVENTS"
+if [ "$1" = set-state ]; then
+  if [ "${HTASK_SET_STATE_FAIL:-}" = 1 ]; then printf '模拟状态更新失败\n' >&2; exit 1; fi
+  printf '{"state":"处理中"}\n'
+  exit 0
+fi
+[ "$1" = bug ] || exit 1
 [ "${HTASK_BUG_FAIL:-}" != 1 ] || exit 1
 cat <<'JSON' | jq -c --arg id "$2" '.identifier = $id'
 {"identifier":"720YUN-4764","title":"热点不能拖动","html_url":"https://example.com/bug?view=full&access_token=necessary",  "description":"<p>账号密码: demo secretpass</p><img src=\"https://image.example/origin-url?view=full\" src=\"https://image.example/?access_token=leak\"><p>拖动被遮挡热点失败</p>","comments":[{"content":"已知问题，继续排查"}]}
@@ -86,7 +94,7 @@ EOF
 chmod +x "$tmp/bin/codegraph" "$tmp/bin/pnpm"
 cli="$script_dir/htask"
 
-reset_logs() { : > "$HTASK_TEST_LOG"; : > "$HTASK_BUG_LOG"; : > "$HTASK_GIT_LOG"; }
+reset_logs() { : > "$HTASK_TEST_LOG"; : > "$HTASK_TEST_EVENTS"; : > "$HTASK_BUG_LOG"; : > "$HTASK_GIT_LOG"; }
 run() { (cd "$repo" && bash "$cli" "$@") > "$tmp/out" 2> "$tmp/err"; }
 assert_failure() {
   if run "$@"; then echo "预期失败：$*" >&2; exit 1; fi
@@ -101,6 +109,7 @@ jq -se --arg repo "$repo" 'length == 3 and
   .[1][0:2] == ["agent","start"] and .[1][3:] == ["--kind","pi","--pane","w9:p8"] and
   .[2] == ["agent","prompt","w9:p8","你好"]' "$HTASK_TEST_LOG" >/dev/null
 [ "$(< "$HTASK_GIT_LOG")" = $'ls-remote refs/heads/main\nfetch +refs/heads/main:refs/remotes/origin/main' ]
+[ ! -s "$HTASK_BUG_LOG" ]
 reset_logs
 assert_failure --branch no-dev-profile --mode dev --dev-profile c2v-editor --prompt 'hi'
 grep -q '没有 Dev 启动方案' "$tmp/err"
@@ -247,7 +256,9 @@ grep -q '未使用本地旧版本' "$tmp/err"
 
 reset_logs
 run --branch fix --bug 720YUN-4764 --prompt '优先我的要求' --mode dev
-[ "$(< "$HTASK_BUG_LOG")" = 'bug 720YUN-4764' ]
+[ "$(< "$HTASK_BUG_LOG")" = $'bug 720YUN-4764\nset-state 720YUN-4764 --state 处理中' ]
+[ "$(< "$HTASK_TEST_EVENTS")" = $'pingcode bug 720YUN-4764\nherdr worktree create\nherdr agent start\nherdr agent prompt\npingcode set-state 720YUN-4764 --state 处理中' ]
+grep -q 'PingCode Bug 720YUN-4764 已更新为处理中' "$tmp/out"
 jq -se '.[0][5] == "720YUN-4764/fix" and
   (.[2][3] | startswith("请修复以下 PingCode Bug：") and
    contains("热点不能拖动") and contains("拖动被遮挡热点失败") and
@@ -262,15 +273,17 @@ jq -se '(.[2][3] | index("用户补充要求")) > (.[2][3] | index("拖动被遮
 reset_logs
 run --branch onlybug --bug 720YUN-4764
 jq -se '.[0][5] == "720YUN-4764/onlybug" and (.[2][3] | contains("热点不能拖动"))' "$HTASK_TEST_LOG" >/dev/null
+[ "$(< "$HTASK_BUG_LOG")" = $'bug 720YUN-4764\nset-state 720YUN-4764 --state 处理中' ]
 
 reset_logs
 run --branch foo-bar --bug 720YUN-11380 --prompt 'hi'
 jq -se '.[0][5] == "720YUN-11380/foo-bar" and
   (.[2][3] | contains("编号：720YUN-11380"))' "$HTASK_TEST_LOG" >/dev/null
-[ "$(< "$HTASK_BUG_LOG")" = 'bug 720YUN-11380' ]
+[ "$(< "$HTASK_BUG_LOG")" = $'bug 720YUN-11380\nset-state 720YUN-11380 --state 处理中' ]
 
 reset_logs
 run --branch submit --bug 720YUN-4764 --base main --mode submit
+[ "$(< "$HTASK_BUG_LOG")" = $'bug 720YUN-4764\nset-state 720YUN-4764 --state 处理中' ]
 jq -se '.[0][5] == "720YUN-4764/submit" and
   (.[2][3] | contains("glab mr create --source-branch") and contains("--target-branch") and contains("720YUN-4764") and contains("main") and (contains("（submit 模式）") | not))' "$HTASK_TEST_LOG" >/dev/null
 
@@ -361,6 +374,26 @@ if HTASK_BUG_FAIL=1 run --branch no-bug --bug 720YUN-4764; then
   echo '查询失败不能创建 worktree' >&2; exit 1
 fi
 [ ! -s "$HTASK_TEST_LOG" ]
+[ "$(< "$HTASK_BUG_LOG")" = 'bug 720YUN-4764' ]
+
+# 只有 agent 提示词成功送达才更新状态；更新失败也不能重建已启动的任务。
+for stage in create start prompt; do
+  reset_logs
+  if HTASK_FAIL="$stage" run --branch "bug-${stage}-fail" --bug 720YUN-4764 --prompt 'hi'; then
+    echo "Herdr ${stage} 失败不应更新 bug 状态" >&2; exit 1
+  fi
+  [ "$(< "$HTASK_BUG_LOG")" = 'bug 720YUN-4764' ]
+done
+reset_logs
+if HTASK_SET_STATE_FAIL=1 run --branch bug-state-fail --bug 720YUN-4764 --prompt 'hi'; then
+  echo '更新 bug 失败应报告部分成功' >&2; exit 1
+fi
+[ "$(< "$HTASK_BUG_LOG")" = $'bug 720YUN-4764\nset-state 720YUN-4764 --state 处理中' ]
+[ "$(< "$HTASK_TEST_EVENTS")" = $'pingcode bug 720YUN-4764\nherdr worktree create\nherdr agent start\nherdr agent prompt\npingcode set-state 720YUN-4764 --state 处理中' ]
+grep -q '任务已启动' "$tmp/out"
+! grep -q 'PingCode Bug.*已更新为处理中' "$tmp/out"
+grep -q '任务已启动.*PingCode Bug.*状态更新失败' "$tmp/err"
+grep -q '不要重新执行 htask' "$tmp/err"
 
 # 各阶段失败后不误启 agent、不删除 worktree，也不重复提交提示词。
 reset_logs
@@ -577,8 +610,14 @@ dev = ['pnpm run start']
 TOML
 
 reset_logs
+run --branch bug-with-init --bug 720YUN-4764 --prompt 'hi'
+[ "$(< "$HTASK_TEST_EVENTS")" = $'pingcode bug 720YUN-4764\nherdr worktree create\nherdr tab create\nherdr pane run\nherdr agent start\nherdr agent prompt\npingcode set-state 720YUN-4764 --state 处理中' ]
+reset_logs
 if HTASK_FAIL=tab run --branch tab-fail --prompt 'hi'; then exit 1; fi
 [ "$(wc -l < "$HTASK_TEST_LOG")" -eq 2 ]
+reset_logs
+if HTASK_FAIL=tab run --branch bug-tab-fail --bug 720YUN-4764 --prompt 'hi'; then exit 1; fi
+[ "$(< "$HTASK_BUG_LOG")" = 'bug 720YUN-4764' ]
 reset_logs
 if HTASK_FAIL=run run --branch run-fail --prompt 'hi'; then exit 1; fi
 [ "$(wc -l < "$HTASK_TEST_LOG")" -eq 3 ]
