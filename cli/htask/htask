@@ -22,6 +22,7 @@ htask - 在 Herdr 中创建 worktree 并启动 Pi 或 Codex 任务
 --bug 将编号作为新分支名前缀（编号/分支名），并将脱敏后的 PingCode 描述放在用户补充提示词之前。
 TOML 配置（可选）：~/.config/htask/config.toml 与 <仓库根目录>/.config/htask/config.toml；
 项目配置覆盖全局配置。预设通过 --model <名称> 选取，例如 sol/xhigh。
+可选 [iteration_prompts] 按 --base 分支名精确匹配迭代背景，置于具体任务之前。
 init 命令每次建树都会在新 worktree 的第二个 tab 执行；
 --mode dev 在同一 tab 续跑默认 dev 命令；--dev-profile 选具名 dev_profiles 方案。
 交互模式有具名方案时提供列表；非交互模式省略该选项仍使用默认 dev。
@@ -306,6 +307,12 @@ if [ -n "$bug" ]; then
   fi
 else
   full_prompt="$prompt"
+fi
+
+# 只按 --base 的分支名精确匹配；迭代背景是低优先级定位线索，置于具体任务之前。
+iteration_prompt="$(jq -r --arg base "$base_name" '.iteration_prompts[$base] // empty' <<< "$config_json")"
+if [ -n "$iteration_prompt" ]; then
+  full_prompt="项目迭代背景（起点分支：${base_name}；仅供定位，具体工单或用户要求优先）："$'\n'"${iteration_prompt}"$'\n\n'"${full_prompt}"
 fi
 
 if [ "$mode" = submit ]; then

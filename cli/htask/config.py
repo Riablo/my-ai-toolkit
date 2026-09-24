@@ -37,7 +37,7 @@ def load(path: Path) -> dict:
         fail(path, f"TOML 语法错误：{exc}")
     if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
         fail(path, "schema_version 必须为 1")
-    check_keys(data, {"schema_version", "init", "dev", "dev_profiles", "models"}, path, "根配置")
+    check_keys(data, {"schema_version", "init", "dev", "dev_profiles", "iteration_prompts", "models"}, path, "根配置")
     for name in ("init", "dev"):
         if name in data and (not isinstance(data[name], list) or any(
             not isinstance(command, str) or not command.strip() for command in data[name]
@@ -51,6 +51,12 @@ def load(path: Path) -> dict:
             not isinstance(command, str) or not command.strip() for command in commands
         ):
             fail(path, f"dev_profiles.{name} 必须是非空命令字符串数组，名称不能含空格")
+    iterations = data.get("iteration_prompts", {})
+    if not isinstance(iterations, dict):
+        fail(path, "iteration_prompts 必须是表")
+    for branch, prompt in iterations.items():
+        if not ALIAS.fullmatch(branch) or not isinstance(prompt, str) or not prompt.strip():
+            fail(path, f"iteration_prompts.{branch} 必须是非空提示词字符串，键为起点分支名")
     models = data.get("models", {})
     if not isinstance(models, dict):
         fail(path, "models 必须是表")
@@ -71,13 +77,14 @@ def load(path: Path) -> dict:
 
 
 def main(global_path: Path, project_path: Path) -> None:
-    merged = {"init": [], "dev": [], "dev_profiles": {}, "models": {agent: {} for agent in AGENTS}}
+    merged = {"init": [], "dev": [], "dev_profiles": {}, "iteration_prompts": {}, "models": {agent: {} for agent in AGENTS}}
     for path in (global_path, project_path):
         data = load(path)
         for name in ("init", "dev"):
             if name in data:
                 merged[name] = data[name]
         merged["dev_profiles"].update(data.get("dev_profiles", {}))
+        merged["iteration_prompts"].update(data.get("iteration_prompts", {}))
         for agent, presets in data.get("models", {}).items():
             for alias, spec in presets.items():
                 merged["models"][agent].setdefault(alias, {}).update(spec)

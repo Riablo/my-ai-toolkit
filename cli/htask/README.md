@@ -19,7 +19,7 @@ htask --base v6.1.0 --branch fix-title --bug 720YUN-11374 \
 
 ## TOML 配置
 
-全局配置：`~/.config/htask/config.toml`（若设置 `XDG_CONFIG_HOME`，则使用 `$XDG_CONFIG_HOME/htask/config.toml`）。项目配置：**源仓库根目录**的 `.config/htask/config.toml`。两个文件都可选，存在时需带 `schema_version = 1`；项目的 `init`、`dev` 数组分别整组覆盖全局同名数组，模型预设按 agent / 名称 / 字段逐项覆盖全局；具名 `dev_profiles` 按名称整组覆盖全局。缺少的字段继承全局，显式 `init = []` 可清空全局初始化。旧 `config.json` 必须迁移并移走，否则报错，不会静默跳过命令。
+全局配置：`~/.config/htask/config.toml`（若设置 `XDG_CONFIG_HOME`，则使用 `$XDG_CONFIG_HOME/htask/config.toml`）。项目配置：**源仓库根目录**的 `.config/htask/config.toml`。两个文件都可选，存在时需带 `schema_version = 1`；项目的 `init`、`dev` 数组分别整组覆盖全局同名数组，模型预设按 agent / 名称 / 字段逐项覆盖全局；具名 `dev_profiles` 按名称整组覆盖全局；`iteration_prompts` 按起点分支名逐项覆盖全局。缺少的字段继承全局，显式 `init = []` 可清空全局初始化。旧 `config.json` 必须迁移并移走，否则报错，不会静默跳过命令。
 
 ```toml
 schema_version = 1
@@ -34,6 +34,10 @@ dev = ['pnpm run start']
 [dev_profiles]
 c2v = ['pnpm run start:c2v-editor']
 
+# 下面仅演示语法；使用时填写该分支真实的迭代背景
+[iteration_prompts]
+"v6.1.0" = "本迭代涉及哪些 App / package，以及问题不明确时的排查线索"
+
 [models.pi."sol/xhigh"]
 model = "openai-codex/gpt-6-sol"
 thinking = "xhigh"
@@ -43,6 +47,6 @@ model = "gpt-6-sol"
 thinking = "xhigh"
 ```
 
-`dev` 是默认启动命令数组，具名方案须是非空命令数组；未配置默认 `dev` 时，省略 `--dev-profile` 不会自动选择具名方案。预设的 `model` 是 Pi 的 `provider/model` 或 Codex 的原生模型 ID；`thinking` 可省略（沿用工具本身配置）。新预设需有 `model`，覆盖全局既有预设时可以只写 `thinking`。在命令 tab 中，`SOURCE_DIR` 指源仓库根目录，`WORKTREE_DIR` 指新 worktree 根目录；cwd 是新 worktree。`init` / `dev` 是按序执行的可信 Bash 命令，失败即停止后续命令；审查配置后再运行。配置无效时在建树**之前**报错。
+`dev` 是默认启动命令数组，具名方案须是非空命令数组；未配置默认 `dev` 时，省略 `--dev-profile` 不会自动选择具名方案。`iteration_prompts` 是可选的表，每个分支名对应一个非空字符串，可写多个分支名；只在起点分支名**完全匹配**时放在工单和用户要求之前（`--base origin/v6.1.0` 也匹配 `v6.1.0`）。背景只供定位，具体工单与用户要求优先；不匹配或未配置时不改变原提示词。预设的 `model` 是 Pi 的 `provider/model` 或 Codex 的原生模型 ID；`thinking` 可省略（沿用工具本身配置）。新预设需有 `model`，覆盖全局既有预设时可以只写 `thinking`。在命令 tab 中，`SOURCE_DIR` 指源仓库根目录，`WORKTREE_DIR` 指新 worktree 根目录；cwd 是新 worktree。`init` / `dev` 是按序执行的可信 Bash 命令，失败即停止后续命令；审查配置后再运行。配置无效时在建树**之前**报错。
 
 完整参数见 `htask --help`。配套 [htask skill](../../skills/htask/SKILL.md) 用于判断授权与任务结果边界，不替代 CLI 安装。本地回归：`bash cli/htask/test_htask.bash`（stub，不创建真实 Herdr 任务或发布）。

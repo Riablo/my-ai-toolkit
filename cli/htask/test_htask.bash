@@ -197,6 +197,47 @@ run --branch no-origin --base local-only --prompt 'hi'
 jq -se '.[0][7] == "refs/heads/local-only"' "$HTASK_TEST_LOG" >/dev/null
 [ ! -s "$HTASK_GIT_LOG" ]
 git -C "$repo" remote add origin 'git@gitlab-t.example.com:org/demo.git'
+
+# 精确按起点分支名匹配迭代背景；bug 和用户要求顺序保留，不猜同名前缀。
+mkdir -p "$repo/.config/htask"
+git -C "$repo" push -q "$HTASK_TEST_REMOTE" main:v6.1.0
+git -C "$repo" push -q "$HTASK_TEST_REMOTE" main:v6.1.1
+cat > "$repo/.config/htask/config.toml" <<'TOML'
+schema_version = 1
+[iteration_prompts]
+"v6.1.0" = "示例背景：优先在 apps/sample-app/ 查找；具体任务优先。"
+"v6.2.0" = "另一个版本的背景"
+TOML
+reset_logs
+run --branch ctx-bug --base v6.1.0 --bug 720YUN-4764 --prompt '用户要求：修复主项目'
+jq -se '.[2][3] as $p |
+  ($p | startswith("项目迭代背景（起点分支：v6.1.0；仅供定位，具体工单或用户要求优先）：\n示例背景：优先在 apps/sample-app/ 查找；具体任务优先。")) and
+  (($p | index("请修复以下 PingCode Bug：")) > ($p | index("示例背景："))) and
+  (($p | index("用户补充要求")) > ($p | index("描述："))) and
+  ($p | contains("用户要求：修复主项目")) and
+  ($p | contains("https://example.com/bug?view=full&access_token=necessary")) and
+  ($p | contains("另一个版本的背景") | not)' "$HTASK_TEST_LOG" >/dev/null
+reset_logs
+run --branch ctx-origin --base origin/v6.1.0 --prompt '只修某个问题'
+jq -se '.[2][3] == "项目迭代背景（起点分支：v6.1.0；仅供定位，具体工单或用户要求优先）：\n示例背景：优先在 apps/sample-app/ 查找；具体任务优先。\n\n只修某个问题"' "$HTASK_TEST_LOG" >/dev/null
+reset_logs
+run --branch ctx-other --base v6.1.1 --prompt '只执行原任务'
+jq -se '.[2][3] == "只执行原任务"' "$HTASK_TEST_LOG" >/dev/null
+reset_logs
+run --branch ctx-main --base main --prompt '修主项目'
+jq -se '.[2][3] == "修主项目"' "$HTASK_TEST_LOG" >/dev/null
+reset_logs
+run --branch ctx-submit --base v6.1.0 --mode submit --prompt '交付当前任务'
+jq -se '.[2][3] as $p |
+  ($p | startswith("项目迭代背景（起点分支：v6.1.0")) and
+  (($p | index("交付要求：")) > ($p | index("交付当前任务")))' "$HTASK_TEST_LOG" >/dev/null
+git -C "$repo" checkout -qb v6.1.0
+reset_logs
+run --branch ctx-default --prompt '默认 base'
+jq -se '.[2][3] | startswith("项目迭代背景（起点分支：v6.1.0")' "$HTASK_TEST_LOG" >/dev/null
+git -C "$repo" checkout -q main
+rm "$repo/.config/htask/config.toml"
+
 reset_logs
 HTASK_GIT_FAIL=query assert_failure --branch offline --base main --prompt 'hi'
 grep -q '未回退' "$tmp/err"
@@ -550,6 +591,13 @@ printf 'schema_version = 1\n[dev_profiles]\nc2v-editor = [""]\n' > "$repo/.confi
 reset_logs
 assert_failure --branch bad-profile-config --prompt 'hi'
 grep -q 'dev_profiles.c2v-editor' "$tmp/err"
+printf 'schema_version = 1\n[iteration_prompts]\n"v6.1.0" = ["wrong type"]\n' > "$repo/.config/htask/config.toml"
+reset_logs
+assert_failure --branch bad-iteration-config --prompt 'hi'
+grep -q 'iteration_prompts.v6.1.0' "$tmp/err"
+printf 'schema_version = 1\n[iteration_prompts]\n"v6.1.0" = "  "\n' > "$repo/.config/htask/config.toml"
+reset_logs
+assert_failure --branch empty-iteration-config --prompt 'hi'
 rm "$repo/.config/htask/config.toml"
 reset_logs
 run --branch no-config --mode dev --prompt 'hi'
@@ -563,6 +611,9 @@ dev = ['pnpm run start']
 [dev_profiles]
 "c2v-editor" = ['pnpm run start:global-c2v']
 extension = ['pnpm run start:extension']
+[iteration_prompts]
+"v6.1.0" = "全局迭代背景"
+"v6.2.0" = "全局第二版本"
 [models.pi."sol/xhigh"]
 model = 'openai-codex/gpt-6-sol'
 thinking = 'xhigh'
@@ -572,6 +623,8 @@ schema_version = 1
 init = ['codegraph project']
 [dev_profiles]
 "c2v-editor" = ['pnpm run start:project-c2v']
+[iteration_prompts]
+"v6.1.0" = "项目迭代背景"
 [models.pi."sol/xhigh"]
 thinking = 'low'
 TOML
@@ -581,6 +634,8 @@ jq -se '.[3][3:] == ["--kind","pi","--pane","w9:p8","--","--provider","openai-co
 : > "$HTASK_SETUP_LOG"
 run_setup_in_worktree layered
 [ "$(< "$HTASK_SETUP_LOG")" = $'codegraph project\npnpm run start' ]
+python3 "$script_dir/config.py" "$XDG_CONFIG_HOME/htask/config.toml" "$repo/.config/htask/config.toml" |
+  jq -e '.iteration_prompts["v6.1.0"] == "项目迭代背景" and .iteration_prompts["v6.2.0"] == "全局第二版本"' >/dev/null
 reset_logs
 run --branch override-profile --mode dev --dev-profile c2v-editor --prompt 'hi'
 : > "$HTASK_SETUP_LOG"
