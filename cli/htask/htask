@@ -8,7 +8,7 @@ htask - 在 Herdr 中创建 worktree 并启动 Pi 或 Codex 任务
 用法:
   htask [--repo 路径] [--base 分支名] --branch 分支 [--bug 编号]
         [--agent pi|codex] [--model 预设名]
-        [--mode dev|submit] [--prompt 提示词]
+        [--mode dev|submit] [--dev-profile 名称] [--prompt 提示词]
   htask                         交互式填写参数
 
 默认值:
@@ -23,7 +23,8 @@ htask - 在 Herdr 中创建 worktree 并启动 Pi 或 Codex 任务
 TOML 配置（可选）：~/.config/htask/config.toml 与 <仓库根目录>/.config/htask/config.toml；
 项目配置覆盖全局配置。预设通过 --model <名称> 选取，例如 sol/xhigh。
 init 命令每次建树都会在新 worktree 的第二个 tab 执行；
---mode dev 会在同一 tab 续跑 dev 命令。
+--mode dev 在同一 tab 续跑默认 dev 命令；--dev-profile 选具名 dev_profiles 方案。
+交互模式有具名方案时提供列表；非交互模式省略该选项仍使用默认 dev。
 命令在 Bash 中运行，SOURCE_DIR 为原仓库路径；无配置或无对应命令时跳过第二个 tab。
 --mode submit 根据 origin 主机名识别 GitHub/GitLab，无法识别时停止；
               授权 agent 完成后推送分支、创建 PR/MR；CLI 不直接推送。
@@ -47,6 +48,7 @@ native_model=""
 thinking=""
 bug=""
 mode=""
+dev_profile=""
 prompt=""
 repo_set=0
 base_set=0
@@ -61,7 +63,7 @@ no_args=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --repo|--base|--branch|--agent|--model|--bug|--mode|--prompt)
+    --repo|--base|--branch|--agent|--model|--bug|--mode|--dev-profile|--prompt)
       [ "$#" -ge 2 ] && [ -n "$2" ] || die "$1 需要非空参数"
       case "$1" in
         --repo) repo="$2"; repo_set=1 ;;
@@ -71,6 +73,7 @@ while [ "$#" -gt 0 ]; do
         --model) model="$2"; model_set=1 ;;
         --bug) bug="$2"; bug_set=1 ;;
         --mode) mode="$2"; mode_set=1 ;;
+        --dev-profile) dev_profile="$2" ;;
         --prompt) prompt="$2"; prompt_set=1 ;;
       esac
       shift 2 ;;
@@ -156,6 +159,24 @@ if [ "$interactive" -eq 1 ]; then
     fi
   fi
   if [ "$mode_set" -eq 0 ]; then ask '模式 --mode (dev/submit)' ''; mode="$REPLY"; fi
+  if [ "$mode" = dev ] && [ -z "$dev_profile" ]; then
+    readarray -t profile_names < <(jq -r '.dev_profiles | keys_unsorted[]' <<< "$config_json")
+    if [ "${#profile_names[@]}" -gt 0 ]; then
+      printf 'Dev 启动方案 --dev-profile：\n  0) 默认（dev）\n' >&2
+      for i in "${!profile_names[@]}"; do printf '  %d) %s\n' "$((i + 1))" "${profile_names[$i]}" >&2; done
+      while :; do
+        printf '选择 [0]: ' >&2
+        IFS= read -r answer || die '输入中断，未创建任务'
+        if [ -z "$answer" ] || [ "$answer" = 0 ]; then break; fi
+        selected=0
+        for i in "${!profile_names[@]}"; do
+          if [ "$answer" = "$((i + 1))" ]; then dev_profile="${profile_names[$i]}"; selected=1; break; fi
+        done
+        [ "$selected" -eq 0 ] || break
+        printf '无效的序号，请重新选择。\n' >&2
+      done
+    fi
+  fi
   if [ "$prompt_set" -eq 0 ]; then
     if [ -n "$bug" ]; then
       ask '提示词 --prompt' ''
@@ -171,6 +192,10 @@ fi
 agent="${agent:-pi}"
 case "$agent" in pi|codex) ;; *) die '--agent 仅支持 pi 或 codex' ;; esac
 case "$mode" in ''|dev|submit) ;; *) die '--mode 仅支持 dev 或 submit' ;; esac
+if [ -n "$dev_profile" ]; then
+  [ "$mode" = dev ] || die '--dev-profile 仅适用于 --mode dev'
+  jq -e --arg profile "$dev_profile" '.dev_profiles | has($profile)' <<< "$config_json" >/dev/null || die "没有 Dev 启动方案：${dev_profile}；请检查 config.toml"
+fi
 if [ -n "$model" ]; then
   native_model="$(jq -er --arg agent "$agent" --arg alias "$model" '.models[$agent][$alias].model // empty' <<< "$config_json")" || die "${agent} 没有模型预设：${model}；请检查 config.toml"
   thinking="$(jq -r --arg agent "$agent" --arg alias "$model" '.models[$agent][$alias].thinking // empty' <<< "$config_json")"
@@ -241,7 +266,11 @@ init_cmds=()
 dev_cmds=()
 setup_cmds=()
 readarray -d '' -t init_cmds < <(jq -j '.init[] | . + "\u0000"' <<< "$config_json")
-readarray -d '' -t dev_cmds < <(jq -j '.dev[] | . + "\u0000"' <<< "$config_json")
+if [ -n "$dev_profile" ]; then
+  readarray -d '' -t dev_cmds < <(jq -j --arg profile "$dev_profile" '.dev_profiles[$profile][] | . + "\u0000"' <<< "$config_json")
+else
+  readarray -d '' -t dev_cmds < <(jq -j '.dev[] | . + "\u0000"' <<< "$config_json")
+fi
 setup_cmds=("${init_cmds[@]}")
 if [ "$mode" = dev ]; then setup_cmds+=("${dev_cmds[@]}"); fi
 

@@ -19,7 +19,7 @@ disable-model-invocation: true
 
 - **Bug 与提示词：** `--bug` 让 CLI 自行查询 `pingcode-cli bug`，把编号作为分支前缀（`编号/分支名`），并将工单文字、评论及图片地址放在用户补充要求之前；用户补充要求冲突时优先。无 bug 时，`--prompt` 就是主任务提示词。传给 `--branch` 的是**未加 bug 前缀**的名字，不要提前拼接；也不必重复查询工单再把原始 JSON/HTML 塞进 `--prompt`。CLI 对正文疑似凭据的过滤是尽力而为，**工单与图片的完整链接（包括查询参数）会交给 agent**；敏感工单应先审查再发送。
 - **Agent 与模型：** 默认 agent 为 Pi；`--model` 仅接受该 agent 的 TOML 预设名（如 `sol/xhigh`），会转换为原生模型/强度参数。省略 `--model` 时沿用 Pi/Codex 自身配置；无预设的交互模式不会问模型。用户指定原生 ID 或强度时先核对配置中的预设，未经同意不替用户添加配置或猜测 ID；显式传入未配置的预设须报错。CLI 已移除 `--thinking`，也不自行重复启动 agent 或发送提示词。
-- **配置与 dev：** 可选全局 `~/.config/htask/config.toml`（或 `$XDG_CONFIG_HOME/htask/config.toml`）和源仓库 `.config/htask/config.toml` 均使用 `schema_version = 1`；项目的 `init`/`dev` 各自覆盖全局同名数组，模型预设逐项覆盖。旧 JSON 尚存或 TOML 格式无效时 CLI 会在建树前停止，协助迁移或修复。CLI 在新 worktree 的第二个 tab 顺序执行 `init`，仅 dev 模式续跑 `dev`；`SOURCE_DIR` 为源仓库根目录。配置含 shell 命令，先确认来源可信。命令只是异步派发；检查第二个 tab 后才能报告初始化或服务已完成。配置示例见随 CLI 发布的 README。
+- **配置与 dev：** 可选全局 `~/.config/htask/config.toml`（或 `$XDG_CONFIG_HOME/htask/config.toml`）和源仓库 `.config/htask/config.toml` 均使用 `schema_version = 1`；项目的 `init`/`dev` 各自覆盖全局同名数组，具名 `dev_profiles` 按名称整组覆盖，模型预设逐项覆盖。旧 JSON 尚存或 TOML 格式无效时 CLI 会在建树前停止，协助迁移或修复。CLI 在新 worktree 的第二个 tab 先执行 `init`；dev 模式交互选择启动方案，脚本不传 `--dev-profile` 使用默认 `dev`，传入名称则只运行该方案。未知名称在建树前报错；不从 bug 或路径猜 App。`SOURCE_DIR` 为源仓库根目录。配置含 shell 命令，先确认来源可信。命令只是异步派发；检查第二个 tab 后才能报告初始化或服务已完成。配置示例见随 CLI 发布的 README。
 - **submit：** 仅支持主机名可自动识别的 GitHub/GitLab 网络 `origin`；未知自托管域名在建树前报错，应核对远端地址，不猜测平台；本地路径/file 远端不适用，不能悄悄降级。目标 PR/MR 分支由 `--base` 的分支名推导，CLI 会在建树前确认远端同名分支存在；仅本地分支无法作 submit 目标。CLI 只是给 agent 追加测试、提交、推送和用 `gh`/`glab` 创建 PR/MR 的指令，**不会自己发布或等待完成**。
 
 ## 完成与故障

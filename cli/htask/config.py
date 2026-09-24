@@ -37,12 +37,20 @@ def load(path: Path) -> dict:
         fail(path, f"TOML 语法错误：{exc}")
     if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
         fail(path, "schema_version 必须为 1")
-    check_keys(data, {"schema_version", "init", "dev", "models"}, path, "根配置")
+    check_keys(data, {"schema_version", "init", "dev", "dev_profiles", "models"}, path, "根配置")
     for name in ("init", "dev"):
         if name in data and (not isinstance(data[name], list) or any(
             not isinstance(command, str) or not command.strip() for command in data[name]
         )):
             fail(path, f"{name} 必须是非空命令组成的字符串数组（可为空数组）")
+    profiles = data.get("dev_profiles", {})
+    if not isinstance(profiles, dict):
+        fail(path, "dev_profiles 必须是表")
+    for name, commands in profiles.items():
+        if not ALIAS.fullmatch(name) or not isinstance(commands, list) or not commands or any(
+            not isinstance(command, str) or not command.strip() for command in commands
+        ):
+            fail(path, f"dev_profiles.{name} 必须是非空命令字符串数组，名称不能含空格")
     models = data.get("models", {})
     if not isinstance(models, dict):
         fail(path, "models 必须是表")
@@ -63,12 +71,13 @@ def load(path: Path) -> dict:
 
 
 def main(global_path: Path, project_path: Path) -> None:
-    merged = {"init": [], "dev": [], "models": {agent: {} for agent in AGENTS}}
+    merged = {"init": [], "dev": [], "dev_profiles": {}, "models": {agent: {} for agent in AGENTS}}
     for path in (global_path, project_path):
         data = load(path)
         for name in ("init", "dev"):
             if name in data:
                 merged[name] = data[name]
+        merged["dev_profiles"].update(data.get("dev_profiles", {}))
         for agent, presets in data.get("models", {}).items():
             for alias, spec in presets.items():
                 merged["models"][agent].setdefault(alias, {}).update(spec)

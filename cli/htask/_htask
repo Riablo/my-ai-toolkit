@@ -11,6 +11,7 @@ _htask() {
     '--agent[Agent 类型，默认 pi]:Agent:(pi codex)'
     '--model[已配置的模型预设名]:预设名:'
     '--mode[任务模式]:模式:(dev submit)'
+    '--dev-profile[具名 Dev 启动方案，省略则用默认 dev]:方案名:'
     '--prompt[任务提示词]:提示词:'
   )
   _arguments -s "${opts[@]}"

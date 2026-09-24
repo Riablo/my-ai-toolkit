@@ -102,6 +102,9 @@ jq -se --arg repo "$repo" 'length == 3 and
   .[2] == ["agent","prompt","w9:p8","你好"]' "$HTASK_TEST_LOG" >/dev/null
 [ "$(< "$HTASK_GIT_LOG")" = $'ls-remote refs/heads/main\nfetch +refs/heads/main:refs/remotes/origin/main' ]
 reset_logs
+assert_failure --branch no-dev-profile --mode dev --dev-profile c2v-editor --prompt 'hi'
+grep -q '没有 Dev 启动方案' "$tmp/err"
+reset_logs
 assert_failure --branch no-preset --model sol/xhigh --prompt 'hi'
 grep -q '没有模型预设' "$tmp/err"
 cat > "$XDG_CONFIG_HOME/htask/config.toml" <<'TOML'
@@ -413,6 +416,8 @@ cat > "$repo/.config/htask/config.toml" <<'TOML'
 schema_version = 1
 init = ['cp "$SOURCE_DIR/.env.development.local" ./.env.development.local', 'codegraph index -f', 'pnpm install']
 dev = ['pnpm run start']
+[dev_profiles]
+"c2v-editor" = ['pnpm run start:c2v-editor']
 TOML
 setup_command() { jq -sr 'map(select(.[0:2] == ["pane","run"]))[-1][3]' "$HTASK_TEST_LOG"; }
 run_setup_in_worktree() {
@@ -457,6 +462,53 @@ run_setup_in_worktree dev-task
 [ "$(< "$HTASK_SETUP_LOG")" = $'codegraph index -f\npnpm install\npnpm run start' ]
 
 reset_logs
+run --branch c2v-task --mode dev --dev-profile c2v-editor --prompt 'hi'
+jq -se 'length == 5 and .[1][7] == "Dev" and (.[4][3] | startswith("hi"))' "$HTASK_TEST_LOG" >/dev/null
+: > "$HTASK_SETUP_LOG"
+run_setup_in_worktree c2v-task
+[ "$(< "$HTASK_SETUP_LOG")" = $'codegraph index -f\npnpm install\npnpm run start:c2v-editor' ]
+
+# 交互 dev 模式列出默认命令与具名方案；通过序号选择 C2V。
+reset_logs
+python3 - "$cli" "$repo" <<'PY'
+import os, pty, select, subprocess, sys, time
+master, slave = pty.openpty()
+p = subprocess.Popen(['bash', sys.argv[1], '--branch', 'c2v-tty', '--mode', 'dev'],
+                     cwd=sys.argv[2], stdin=slave, stdout=slave, stderr=slave)
+os.close(slave)
+try:
+    for expected, answer in [('仓库路径'.encode(), b'\n'), (b'--base', b'\n'),
+                             (b'--bug', b'\n'), (b'--agent', b'\n'),
+                             (b'1) c2v-editor', b'1\n'), (b'--prompt', b'hi\n')]:
+        output = b''
+        end = time.monotonic() + 10
+        while expected not in output:
+            remaining = end - time.monotonic()
+            if remaining <= 0:
+                raise AssertionError(f'missing {expected!r}: {output!r}')
+            ready, _, _ = select.select([master], [], [], remaining)
+            if ready:
+                output += os.read(master, 4096)
+        os.write(master, answer)
+    assert p.wait(timeout=10) == 0
+finally:
+    if p.poll() is None:
+        p.kill()
+    os.close(master)
+PY
+: > "$HTASK_SETUP_LOG"
+run_setup_in_worktree c2v-tty
+[ "$(< "$HTASK_SETUP_LOG")" = $'codegraph index -f\npnpm install\npnpm run start:c2v-editor' ]
+reset_logs
+assert_failure --branch invalid-profile --mode dev --dev-profile unknown --prompt 'hi'
+grep -q '没有 Dev 启动方案' "$tmp/err"
+reset_logs
+assert_failure --branch wrong-mode --mode submit --dev-profile c2v-editor --prompt 'hi'
+grep -q '仅适用于 --mode dev' "$tmp/err"
+reset_logs
+assert_failure --branch no-mode --dev-profile c2v-editor --prompt 'hi'
+
+reset_logs
 run --branch failed-init --mode dev --prompt 'hi'
 : > "$HTASK_SETUP_LOG"
 if HTASK_SETUP_FAIL=codegraph run_setup_in_worktree failed-init; then
@@ -479,6 +531,8 @@ cat > "$repo/.config/htask/config.toml" <<'TOML'
 schema_version = 1
 init = ['cp "$SOURCE_DIR/.env.development.local" ./.env.development.local', 'codegraph index -f', 'pnpm install']
 dev = ['pnpm run start']
+[dev_profiles]
+"c2v-editor" = ['pnpm run start:c2v-editor']
 TOML
 
 reset_logs
@@ -492,6 +546,10 @@ printf 'schema_version = 1\ninit = [42]\n' > "$repo/.config/htask/config.toml"
 reset_logs
 assert_failure --branch bad-config --prompt 'hi'
 grep -q '配置无效' "$tmp/err"
+printf 'schema_version = 1\n[dev_profiles]\nc2v-editor = [""]\n' > "$repo/.config/htask/config.toml"
+reset_logs
+assert_failure --branch bad-profile-config --prompt 'hi'
+grep -q 'dev_profiles.c2v-editor' "$tmp/err"
 rm "$repo/.config/htask/config.toml"
 reset_logs
 run --branch no-config --mode dev --prompt 'hi'
@@ -502,6 +560,9 @@ cat > "$XDG_CONFIG_HOME/htask/config.toml" <<'TOML'
 schema_version = 1
 init = ['codegraph global']
 dev = ['pnpm run start']
+[dev_profiles]
+"c2v-editor" = ['pnpm run start:global-c2v']
+extension = ['pnpm run start:extension']
 [models.pi."sol/xhigh"]
 model = 'openai-codex/gpt-6-sol'
 thinking = 'xhigh'
@@ -509,6 +570,8 @@ TOML
 cat > "$repo/.config/htask/config.toml" <<'TOML'
 schema_version = 1
 init = ['codegraph project']
+[dev_profiles]
+"c2v-editor" = ['pnpm run start:project-c2v']
 [models.pi."sol/xhigh"]
 thinking = 'low'
 TOML
@@ -518,6 +581,16 @@ jq -se '.[3][3:] == ["--kind","pi","--pane","w9:p8","--","--provider","openai-co
 : > "$HTASK_SETUP_LOG"
 run_setup_in_worktree layered
 [ "$(< "$HTASK_SETUP_LOG")" = $'codegraph project\npnpm run start' ]
+reset_logs
+run --branch override-profile --mode dev --dev-profile c2v-editor --prompt 'hi'
+: > "$HTASK_SETUP_LOG"
+run_setup_in_worktree override-profile
+[ "$(< "$HTASK_SETUP_LOG")" = $'codegraph project\npnpm run start:project-c2v' ]
+reset_logs
+run --branch inherited-profile --mode dev --dev-profile extension --prompt 'hi'
+: > "$HTASK_SETUP_LOG"
+run_setup_in_worktree inherited-profile
+[ "$(< "$HTASK_SETUP_LOG")" = $'codegraph project\npnpm run start:extension' ]
 printf 'schema_version = 1\ninit = []\ndev = []\n' > "$repo/.config/htask/config.toml"
 reset_logs
 run --branch cleared --mode dev --prompt 'hi'
