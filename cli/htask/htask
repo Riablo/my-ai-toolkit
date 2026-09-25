@@ -23,6 +23,7 @@ htask - 在 Herdr 中创建 worktree 并启动 Pi 或 Codex 任务
 任务启动且提示词送达后，调用 pingcode-cli set-state <编号> --state 处理中。
 TOML 配置（可选）：~/.config/htask/config.toml 与 <仓库根目录>/.config/htask/config.toml；
 项目配置覆盖全局配置。预设通过 --model <名称> 选取，例如 sol/xhigh。
+--agent codex 始终传 --dangerously-bypass-approvals-and-sandbox，关闭审批和沙箱；仅在可信环境使用。
 可选 [iteration_prompts] 按 --base 分支名精确匹配迭代背景，置于具体任务之前。
 init 命令每次建树都会在新 worktree 的第二个 tab 执行；
 --mode dev 在同一 tab 续跑默认 dev 命令；--dev-profile 选具名 dev_profiles 方案。
@@ -372,6 +373,7 @@ if [ "$agent" = pi ]; then
 else
   if [ -n "$native_model" ]; then agent_args+=(-m "$native_model"); fi
   if [ -n "$thinking" ]; then agent_args+=(-c "model_reasoning_effort=\"${thinking}\""); fi
+  agent_args+=(--dangerously-bypass-approvals-and-sandbox)
 fi
 start_args=(agent start "$agent_name" --kind "$agent" --pane "$pane")
 if [ "${#agent_args[@]}" -gt 0 ]; then start_args+=(-- "${agent_args[@]}"); fi

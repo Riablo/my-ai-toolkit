@@ -111,6 +111,9 @@ jq -se --arg repo "$repo" 'length == 3 and
 [ "$(< "$HTASK_GIT_LOG")" = $'ls-remote refs/heads/main\nfetch +refs/heads/main:refs/remotes/origin/main' ]
 [ ! -s "$HTASK_BUG_LOG" ]
 reset_logs
+run --branch codex-default --agent codex --prompt '你好'
+jq -se '.[1][3:] == ["--kind","codex","--pane","w9:p8","--","--dangerously-bypass-approvals-and-sandbox"]' "$HTASK_TEST_LOG" >/dev/null
+reset_logs
 assert_failure --branch no-dev-profile --mode dev --dev-profile c2v-editor --prompt 'hi'
 grep -q '没有 Dev 启动方案' "$tmp/err"
 reset_logs
@@ -134,8 +137,7 @@ jq -se '.[1][3:] == ["--kind","pi","--pane","w9:p8","--","--provider","openai-co
 
 reset_logs
 run --branch codex --agent codex --model luna/max --prompt '你好'
-jq -se '.[1][3:] == ["--kind","codex","--pane","w9:p8","--","-m","gpt-6-luna","-c","model_reasoning_effort=\"max\""]' "$HTASK_TEST_LOG" >/dev/null
-if grep -q dangerously "$HTASK_TEST_LOG"; then echo '不可默认绕过审批和沙箱' >&2; exit 1; fi
+jq -se '.[1][3:] == ["--kind","codex","--pane","w9:p8","--","-m","gpt-6-luna","-c","model_reasoning_effort=\"max\"","--dangerously-bypass-approvals-and-sandbox"]' "$HTASK_TEST_LOG" >/dev/null
 # 交互只列出所选 agent 的预设，选择序号后转换为原生参数。
 reset_logs
 python3 - "$cli" "$repo" <<'PY'
@@ -166,7 +168,7 @@ finally:
         p.kill()
     os.close(master)
 PY
-jq -se '.[1][3:] == ["--kind","codex","--pane","w9:p8","--","-m","gpt-6-luna","-c","model_reasoning_effort=\"max\""]' "$HTASK_TEST_LOG" >/dev/null
+jq -se '.[1][3:] == ["--kind","codex","--pane","w9:p8","--","-m","gpt-6-luna","-c","model_reasoning_effort=\"max\"","--dangerously-bypass-approvals-and-sandbox"]' "$HTASK_TEST_LOG" >/dev/null
 reset_logs
 assert_failure --branch unknown-alias --agent codex --model sol/xhigh --prompt 'hi'
 reset_logs
