@@ -70,6 +70,7 @@ class JenkinsBuilderCliTests(unittest.TestCase):
             read_output(b"JBC_READY> ")
             for command, expected in [
                 ("build --", ["--job", "--branch", "--follow", "--json"]),
+                ("build-many --", ["--jobs", "--branch", "--follow", "--json"]),
                 ("build --job '文件夹/编辑器' --", ["--branch", "--follow", "--json"]),
                 ("set-branch --", ["--job", "--branch", "--json"]),
                 ("config init --", ["--url", "--username", "--token", "--verify-ssl"]),
@@ -145,6 +146,82 @@ class JenkinsBuilderCliTests(unittest.TestCase):
                 self.assertIsNone(client.session.post.call_args.kwargs["data"])
                 self.assertIsNone(client.session.post.call_args.kwargs["params"])
                 self.assertFalse(client.session.post.call_args.kwargs["allow_redirects"])
+
+    def test_build_many_submits_all_before_waiting_and_keeps_single_branch(self) -> None:
+        for follow in (False, True):
+            with self.subTest(follow=follow):
+                config = self.make_config()
+                entries = MODULE.job_entries_from_live_jobs(config, [self.live_job(name) for name in ("文件夹/A", "B")])
+                client = Mock()
+                client.job_config_xml.return_value = self.branch_xml()
+                client.trigger_build.side_effect = ["9", "10"]
+
+                def wait_number(queue_id, **kwargs):
+                    self.assertEqual(client.trigger_build.call_count, 2)
+                    return int(queue_id) + 30
+
+                client.wait_for_build_number.side_effect = wait_number
+                client.wait_for_build_result.return_value = {"building": False, "result": "SUCCESS"}
+                argv = ["build-many", "--jobs", "文件夹/A", "B", "文件夹/A", "--branch", "feature/shared", "--json"]
+                if follow:
+                    argv.append("--follow")
+                with patch.object(MODULE, "create_client_and_entries", return_value=(config, client, entries)), contextlib.redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(MODULE.main(argv), 0)
+                results = json.loads(output.getvalue())
+                self.assertEqual([item["job"] for item in results], ["文件夹/A", "B"])
+                self.assertEqual([item["queue_id"] for item in results], ["9", "10"])
+                self.assertEqual(client.wait_for_build_result.call_count, 2 if follow else 0)
+                self.assertEqual(client.update_job_config_xml.call_count, 2)
+                for call in client.update_job_config_xml.call_args_list:
+                    self.assertEqual(MODULE.parse_branch_specifier(call.args[1])[0], "*/feature/shared")
+
+    def test_build_many_preflight_errors_do_not_write(self) -> None:
+        for failure in ("missing", "branch", "read"):
+            with self.subTest(failure=failure):
+                config = self.make_config()
+                entries = MODULE.job_entries_from_live_jobs(config, [self.live_job(name) for name in ("A", "B")])
+                client = Mock()
+                client.job_config_xml.side_effect = [self.branch_xml(), MODULE.CLIError("不可读") if failure == "read" else "<project/>"]
+                argv = ["build-many", "--jobs", "A", "missing" if failure == "missing" else "B", "--branch", "main", "--json"]
+                with patch.object(MODULE, "create_client_and_entries", return_value=(config, client, entries)), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(MODULE.main(argv), 1)
+                client.update_job_config_xml.assert_not_called()
+                client.trigger_build.assert_not_called()
+
+    def test_build_many_partial_failures_still_collect_other_jobs(self) -> None:
+        for stage in ("update", "trigger", "queue", "follow", "result"):
+            with self.subTest(stage=stage):
+                config = self.make_config()
+                entries = MODULE.job_entries_from_live_jobs(config, [self.live_job(name) for name in ("A", "B")])
+                client = Mock()
+                client.job_config_xml.return_value = self.branch_xml()
+                client.trigger_build.side_effect = [MODULE.CLIError("触发失败"), "10"] if stage == "trigger" else ["9", "10"]
+                if stage == "update":
+                    client.update_job_config_xml.side_effect = [MODULE.CLIError("写入失败"), None]
+                client.wait_for_build_number.side_effect = [MODULE.CLIError("队列超时"), 42] if stage == "queue" else [41, 42]
+                success = {"building": False, "result": "SUCCESS"}
+                client.wait_for_build_result.side_effect = ([MODULE.CLIError("等待超时"), success] if stage == "follow" else
+                    [{"building": False, "result": "FAILURE"}, success] if stage == "result" else [success, success])
+                with patch.object(MODULE, "create_client_and_entries", return_value=(config, client, entries)), contextlib.redirect_stdout(io.StringIO()) as output, contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(MODULE.main(["build-many", "--jobs", "A", "B", "--branch", "main", "--follow", "--json"]), 1)
+                results = json.loads(output.getvalue())
+                self.assertEqual(results[1]["result"], "SUCCESS")
+                if stage == "result":
+                    self.assertEqual(results[0]["result"], "FAILURE")
+                else:
+                    self.assertEqual(results[0]["status"], "error")
+                    self.assertEqual(results[0]["stage"], stage)
+                if stage in ("queue", "follow", "result"):
+                    self.assertEqual(results[0]["queue_id"], "9")
+                self.assertEqual(client.trigger_build.call_count, 1 if stage == "update" else 2)
+
+    def test_build_many_requires_explicit_jobs_and_one_branch(self) -> None:
+        for argv in (["build-many"], ["build-many", "--jobs", "A"],
+                     ["build-many", "--branch", "main"],
+                     ["build-many", "--jobs", "A", "--branch", "main", "other"],
+                     ["build-many", "--jobs", "A", "--branch", ""]):
+            with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                MODULE.build_parser().parse_args(argv)
 
     def test_build_does_not_post_when_parameter_metadata_is_unavailable(self) -> None:
         for response in ({}, {"property": None}, {"property": [None]}, MODULE.CLIError("HTTP 403")):

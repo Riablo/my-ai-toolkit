@@ -1122,6 +1122,61 @@ def cmd_build(args: argparse.Namespace) -> None:
     print(yaml_dump(results[0]))
 
 
+def cmd_build_many(args: argparse.Namespace) -> None:
+    config, client, entries = create_client_and_entries()
+    targets = [resolve_job_name(name, entries) for name in dict.fromkeys(args.jobs)]
+    specifier = normalize_branch_specifier(args.branch)
+    prepared = []
+    # Validate every target before the first remote write.
+    for entry in targets:
+        try:
+            _, tree, branch_node = parse_branch_specifier(client.job_config_xml(entry.url))
+            branch_node.text = specifier
+            prepared.append((entry, serialize_tree(tree)))
+        except CLIError as exc:
+            raise CLIError(f"{entry.full_name}: {exc}") from exc
+
+    results: list[dict[str, Any]] = []
+    # Submit all jobs before waiting for any queue/build, letting Jenkins
+    # schedule them concurrently even when an earlier job is blocked in queue.
+    for entry, xml in prepared:
+        result: dict[str, Any] = {"job": entry.full_name, "branch": infer_branch_display(specifier)}
+        stage = "update"
+        try:
+            client.update_job_config_xml(entry.url, xml)
+            result["branch_updated"] = True
+            stage = "trigger"
+            result["queue_id"] = client.trigger_build(entry.url)
+        except CLIError as exc:
+            result.update(status="error", stage=stage, error=str(exc))
+        results.append(result)
+
+    for entry, result in zip(targets, results):
+        if "error" in result:
+            continue
+        stage = "queue"
+        try:
+            number = client.wait_for_build_number(
+                result["queue_id"],
+                poll_interval_seconds=config["defaults"]["poll_interval_seconds"],
+            )
+            result.update(run_id=format_run_id(entry.full_name, number), build_number=number,
+                          url=f"{entry.url.rstrip('/')}/{number}/")
+            if args.follow:
+                stage = "follow"
+                result.update(maybe_follow_build(client, config, entry, number))
+        except CLIError as exc:
+            result.update(status="error", stage=stage, error=str(exc))
+
+    if args.json:
+        print_json(results)
+    else:
+        print("批量构建结果:")
+        print(yaml_dump(results))
+    if any("error" in result or (args.follow and result.get("result") != "SUCCESS") for result in results):
+        raise CLIError("部分任务失败或状态未确认，请查看逐 job 结果；勿直接重跑整批。已修改的分支不会恢复，已提交的构建不会取消。")
+
+
 def cmd_runs_list(args: argparse.Namespace) -> None:
     config = load_config(required=True)
     client = JenkinsClient(config)
@@ -1332,6 +1387,14 @@ def build_parser() -> argparse.ArgumentParser:
     build_parser_.add_argument("--follow", action="store_true", help="等待构建完成")
     build_parser_.add_argument("--json", action="store_true", help="输出 JSON")
     build_parser_.set_defaults(func=cmd_build)
+
+    many_parser = subparsers.add_parser("build-many", help="以同一分支批量提交构建（非交互）",
+                                       description="先持久修改各 job 分支并提交全部构建，再等待；实际并行度由 Jenkins 决定。部分失败不取消其他任务。")
+    many_parser.add_argument("--jobs", nargs="+", required=True, type=nonempty_value, help="完整 job 名称列表；重复名称只构建一次")
+    many_parser.add_argument("--branch", required=True, type=nonempty_value, help="所有 job 共用的一个分支（持久修改）")
+    many_parser.add_argument("--follow", action="store_true", help="等待所有已提交构建完成；失败或超时返回非零")
+    many_parser.add_argument("--json", action="store_true", help="输出逐 job 结果的 JSON 数组")
+    many_parser.set_defaults(func=cmd_build_many)
 
     set_branch_parser = subparsers.add_parser("set-branch", help="修改 Jenkins Git Branch Specifier")
     set_branch_parser.add_argument("--job", type=nonempty_value, help="完整 Jenkins job 名称；省略时交互选择")

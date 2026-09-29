@@ -8,6 +8,7 @@ Jenkins 构建命令行工具。实时获取 jobs，本地配置保存连接信�
 - `jobs` / `jobs list` 及管理子命令自动同步完整 job 清单，保留标签和描述
 - 用“测试服”“正式服”“未分类”分组选 job，按需输入分支
 - 非交互构建、持久修改经典 Git job 的 Branch Specifier
+- `build-many` 为 monorepo 的多个 job 使用同一分支批量构建
 - 查看运行中的构建、查询状态、停止构建、查看 console output
 
 ## 安装
@@ -163,6 +164,24 @@ jenkins-builder-cli build --job "文件夹/测试服编辑器" --branch feature/
 构建时指定新分支会依次执行两次写入：先通过 `config.xml` 将 Jenkins job 的 Branch Specifier 改成实际分支（例如 `*/v6.1.0`），再触发构建。即使原值是 `${WORKFLOW_REVISION}`，也会直接替换为实际分支名，不使用构建参数传递分支。这样 `jobs list` 和 Jenkins 配置页都能看到当前配置的分支。修改失败则不触发构建；修改成功后会持久保留，即使后续构建失败也不会自动恢复。
 
 触发前自动识别是否启用了参数化构建：普通 job 使用 `build`，参数化 job 使用 `buildWithParameters`，由 Jenkins 使用已配置的参数默认值，无需增加 CLI 参数。`buildWithParameters` 不要求 Git 分支写成变量，也不会将分支改回变量。接口区别见 [Jenkins Remote Access API](https://www.jenkins.io/doc/book/using/remote-access-api/#submitting-jobs)。
+
+### 多 job 同分支构建
+
+`build-many` 是独立的非交互命令，不改变 `build` 的交互方式：
+
+```bash
+jenkins-builder-cli build-many \
+  --jobs "文件夹/编辑器" "文件夹/管理后台" \
+  --branch feature/shared --follow
+# 加 --json 输出按输入顺序排列的逐 job 结果数组
+```
+
+- `--jobs` 和 `--branch` 必填；所有 job 共用一个分支，重复 job 按首次出现顺序去重。
+- 先校验全部 job 存在且分支配置可解析，再逐个持久修改分支并提交构建；全部提交后才等待队列/构建，不会等一个构建结束才提交下一个。实际并行度取决于 Jenkins executor 和资源限制。
+- 不带 `--follow`：等待各任务分配 build number 后返回；带 `--follow`：继续等待所有已提交构建，某个失败不影响收集其他结果。队列等待沿用单 job 的 120 秒超时；每个任务开始等待构建结果时独立使用配置中的 `timeout_seconds`，超时不会取消远程任务。
+- 预检查失败不写入；开始写入后，某个 job 修改/提交失败会记录错误并继续其他 job。成功修改的分支不会回滚，已提交的构建不会自动取消。
+- 部分操作失败、等待超时，或 `--follow` 下任一结果不是 `SUCCESS`，输出整批结果并返回非零。错误记录包含 `stage`（`update` / `trigger` / `queue` / `follow`）、`error` 和已取得的 queue/run 信息；`branch_updated` 表示已确认修改成功。
+- 请求失败可能意味着服务器已接受操作但响应丢失。先核对 Jenkins 队列和构建记录，仅重试确认需要重试的 job，不要直接重跑整批。
 
 查看运行中的构建：
 
