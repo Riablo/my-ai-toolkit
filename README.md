@@ -61,6 +61,7 @@ Skills 用于承载可复用的工作流和任务约定。简单 CLI 直接查�
 
 | 工具 | 说明 |
 | --- | --- |
+| [clipfmt](cli/clipfmt/) | macOS 剪贴板格式化：Jev 分流、本地 JSON/代码/时间/URL/表格及图片转换，DeepSeek 兜底整理错乱空白与换行 |
 | [cloudsaver-cli](cli/cloudsaver-cli/) | 网盘资源搜索与 115 转存工具（Telegram 搜索 / 115 转存） |
 | [freecurrency-cli](cli/freecurrency-cli/) | Open Exchange Rates 汇率工具（金额换算 / 最新汇率 / 本地缓存） |
 | [htask](cli/htask/) | 创建 Herdr worktree 与 Pi/Codex 任务，支持 PingCode bug、项目初始化/Dev tab 和 PR/MR 交付 |
@@ -74,6 +75,15 @@ Skills 用于承载可复用的工作流和任务约定。简单 CLI 直接查�
 | [cos-cli](cli/cos-cli/) | 上传图片或文件夹到腾讯云 COS（配置文件 / MD5 命名 / 自定义前缀 / 预览 / URL 与 JSON 输出） |
 | [testpage-cli](cli/testpage-cli/) | 测试 HTML 页面快速发布工具（同步目录 / 覆盖目标 / Git 提交并推送 / 返回访问 URL） |
 | [wt-land](cli/wt-land/) | 将当前功能分支 rebase 后 fast-forward 到本地目标分支，支持同目录和多 worktree |
+
+### clipfmt 用法
+
+```bash
+clipfmt --check  # 检查配置和依赖，不操作剪贴板
+clipfmt          # 格式化当前剪贴板，成功后重新复制
+```
+
+密钥配置、内容外发和支持范围见 [clipfmt 文档](cli/clipfmt/README.md)。
 
 ### myskills 用法
 

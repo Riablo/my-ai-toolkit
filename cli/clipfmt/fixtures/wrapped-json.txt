@@ -1,0 +1,10 @@
+{"app":{"name":"PelicanHarbor","version":"1.4.2","environments":{"production":{"region
+ ":"ap-east-1","services":{"gateway":{"http":{"port":443,"tls":{"enabled":true,"cert":{
+ "issuer":"ACME","renewal":{"auto":true,"beforeDays":14}}}},"worker":{"queues":[{"name"
+ :"fish-orders","options":{"retry":{"max":3,"backoff":{"type":"exponential","delayMs":5
+ 00}},"deadLetter":{"enabled":true,"target":"failed-orders"}}}]}}}},"ecosystem":{"harbo
+ r":{"zones":[{"id":"A1","birds":[{"species":"pelican","profile":{"name":"波波
+ ","habits":{"feeding":{"schedule":["06:00","17:30"],"preferences":{"fish":{"types":["
+ 沙丁鱼","鳀鱼
+ "],"size":{"min":3,"max":15,"unit":"cm"}}}}}}]}]}}},"meta":{"trace":{"id":"req-008","c
+ ontext":{"source":"demo","flags":{"preview":true,"audit":false}}}}}

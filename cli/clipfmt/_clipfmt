@@ -1,0 +1,4 @@
+#compdef clipfmt
+_arguments \
+  '(-h --help)'{-h,--help}'[显示帮助]' \
+  '--check[只检查配置和依赖，不操作剪贴板]'
