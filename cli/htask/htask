@@ -8,7 +8,7 @@ htask - 在 Herdr 中创建 worktree 并启动 Pi 或 Codex 任务
 用法:
   htask [--repo 路径] [--base 分支名] --branch 分支 [--bug 编号]
         [--agent pi|codex] [--model 预设名]
-        [--mode dev|submit] [--dev-profile 名称] [--prompt 提示词]
+        [--mode dev|submit] [--label 名称 ... | --no-labels] [--prompt 提示词]
   htask                         交互式填写参数
 
 默认值:
@@ -24,13 +24,17 @@ htask - 在 Herdr 中创建 worktree 并启动 Pi 或 Codex 任务
 TOML 配置（可选）：~/.config/htask/config.toml 与 <仓库根目录>/.config/htask/config.toml；
 项目配置覆盖全局配置。预设通过 --model <名称> 选取，例如 sol/xhigh。
 --agent codex 始终传 --dangerously-bypass-approvals-and-sandbox，关闭审批和沙箱；仅在可信环境使用。
-可选 [iteration_prompts] 按 --base 分支名精确匹配迭代背景，置于具体任务之前。
-init 命令每次建树都会在新 worktree 的第二个 tab 执行；
---mode dev 在同一 tab 续跑默认 dev 命令；--dev-profile 选具名 dev_profiles 方案。
-交互模式有具名方案时提供列表；非交互模式省略该选项仍使用默认 dev。
-命令在 Bash 中运行，SOURCE_DIR 为原仓库路径；无配置或无对应命令时跳过第二个 tab。
+配置版本为 schema_version = 2；示例见 cli/htask/config.example.toml。
+项目专属 [labels.<名称>] 可配置 init/dev；[iterations.<起点分支>] 可配置 prompt/labels。
+--label 可重复，显式选择替换迭代默认；--no-labels 明确不选，两者互斥。
+交互时可输入多个编号，回车采用迭代默认，0 不选；无 Label 配置则跳过选择。
+公共 init 执行一次，再按所选 Label 顺序执行专属 init；任何 init 失败都不启动开发服务。
+--mode dev 在 init 全部成功后，为各 Label 的 dev 创建独立 tab 并行启动；
+无 Label 时用顶层 dev，选了 Label 则不附加顶层 dev。CLI 不等待初始化或服务就绪。
+命令在 Bash 中运行，SOURCE_DIR 为原仓库路径、WORKTREE_DIR 为新 worktree；无命令则跳过 Setup。
 --mode submit 根据 origin 主机名识别 GitHub/GitLab，无法识别时停止；
-              授权 agent 完成后推送分支、创建 PR/MR；CLI 不直接推送。
+              授权 agent 完成后推送分支、创建 PR/MR 并核对所选 Label；CLI 不直接推送。
+              Label 缺失/无权限要报告，不新建远端 Label，不重复创建 PR/MR。
 
 示例:
   htask --branch fix-hotspot --bug 720YUN-4764 --prompt '优先修复拖动逻辑'
@@ -51,7 +55,9 @@ native_model=""
 thinking=""
 bug=""
 mode=""
-dev_profile=""
+labels=()
+labels_set=0
+no_labels=0
 prompt=""
 repo_set=0
 base_set=0
@@ -66,7 +72,11 @@ no_args=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --repo|--base|--branch|--agent|--model|--bug|--mode|--dev-profile|--prompt)
+    --no-labels)
+      [ "$labels_set" -eq 0 ] || die '--label 与 --no-labels 互斥'
+      no_labels=1
+      shift ;;
+    --repo|--base|--branch|--agent|--model|--bug|--mode|--label|--prompt)
       [ "$#" -ge 2 ] && [ -n "$2" ] || die "$1 需要非空参数"
       case "$1" in
         --repo) repo="$2"; repo_set=1 ;;
@@ -76,7 +86,9 @@ while [ "$#" -gt 0 ]; do
         --model) model="$2"; model_set=1 ;;
         --bug) bug="$2"; bug_set=1 ;;
         --mode) mode="$2"; mode_set=1 ;;
-        --dev-profile) dev_profile="$2" ;;
+        --label)
+          [ "$no_labels" -eq 0 ] || die '--label 与 --no-labels 互斥'
+          labels+=("$2"); labels_set=1 ;;
         --prompt) prompt="$2"; prompt_set=1 ;;
       esac
       shift 2 ;;
@@ -134,6 +146,9 @@ if [ "$base_set" -eq 0 ]; then
   fi
 fi
 [ -n "$base" ] || die '当前仓库处于 detached HEAD，请指定 --base'
+if [ "$labels_set" -eq 0 ] && [ "$no_labels" -eq 0 ]; then
+  readarray -d '' -t labels < <(jq -j --arg base "${base#origin/}" '.iterations[$base].labels // [] | .[] | . + "\u0000"' <<< "$config_json")
+fi
 
 if [ "$interactive" -eq 1 ]; then
   if [ "$bug_set" -eq 0 ]; then ask 'PingCode bug 编号 --bug' ''; bug="$REPLY"; fi
@@ -162,20 +177,31 @@ if [ "$interactive" -eq 1 ]; then
     fi
   fi
   if [ "$mode_set" -eq 0 ]; then ask '模式 --mode (dev/submit)' ''; mode="$REPLY"; fi
-  if [ "$mode" = dev ] && [ -z "$dev_profile" ]; then
-    readarray -t profile_names < <(jq -r '.dev_profiles | keys_unsorted[]' <<< "$config_json")
-    if [ "${#profile_names[@]}" -gt 0 ]; then
-      printf 'Dev 启动方案 --dev-profile：\n  0) 默认（dev）\n' >&2
-      for i in "${!profile_names[@]}"; do printf '  %d) %s\n' "$((i + 1))" "${profile_names[$i]}" >&2; done
+  if [ "$labels_set" -eq 0 ] && [ "$no_labels" -eq 0 ]; then
+    readarray -t label_names < <(jq -r '.labels | keys_unsorted[]' <<< "$config_json")
+    if [ "${#label_names[@]}" -gt 0 ]; then
+      printf '任务 Label --label（迭代默认：%s）：\n' "${labels[*]:-无}" >&2
+      for i in "${!label_names[@]}"; do printf '  %d) %s\n' "$((i + 1))" "${label_names[$i]}" >&2; done
       while :; do
-        printf '选择 [0]: ' >&2
+        printf '输入序号（如 1,2；回车采用默认；0 不选）: ' >&2
         IFS= read -r answer || die '输入中断，未创建任务'
-        if [ -z "$answer" ] || [ "$answer" = 0 ]; then break; fi
-        selected=0
-        for i in "${!profile_names[@]}"; do
-          if [ "$answer" = "$((i + 1))" ]; then dev_profile="${profile_names[$i]}"; selected=1; break; fi
-        done
-        [ "$selected" -eq 0 ] || break
+        [ -n "$answer" ] || break
+        if [ "$answer" = 0 ]; then labels=(); break; fi
+        candidates=()
+        valid=1
+        if [[ "$answer" =~ ^[0-9]+([,\ ][0-9]+)*$ ]]; then
+          IFS=', ' read -r -a numbers <<< "$answer"
+          for number in "${numbers[@]}"; do
+            found=0
+            for i in "${!label_names[@]}"; do
+              if [ "$number" = "$((i + 1))" ]; then candidates+=("${label_names[$i]}"); found=1; break; fi
+            done
+            if [ "$found" -eq 0 ]; then valid=0; break; fi
+          done
+        else
+          valid=0
+        fi
+        if [ "$valid" -eq 1 ]; then labels=("${candidates[@]}"); break; fi
         printf '无效的序号，请重新选择。\n' >&2
       done
     fi
@@ -195,10 +221,11 @@ fi
 agent="${agent:-pi}"
 case "$agent" in pi|codex) ;; *) die '--agent 仅支持 pi 或 codex' ;; esac
 case "$mode" in ''|dev|submit) ;; *) die '--mode 仅支持 dev 或 submit' ;; esac
-if [ -n "$dev_profile" ]; then
-  [ "$mode" = dev ] || die '--dev-profile 仅适用于 --mode dev'
-  jq -e --arg profile "$dev_profile" '.dev_profiles | has($profile)' <<< "$config_json" >/dev/null || die "没有 Dev 启动方案：${dev_profile}；请检查 config.toml"
-fi
+selected_labels_json="$(jq -cn --args '$ARGS.positional | reduce .[] as $name ([]; if index($name) == null then . + [$name] else . end)' -- "${labels[@]}")"
+readarray -d '' -t labels < <(jq -j '.[] | . + "\u0000"' <<< "$selected_labels_json")
+for label in "${labels[@]}"; do
+  jq -e --arg label "$label" '.labels | has($label)' <<< "$config_json" >/dev/null || die "未声明的 Label：${label}；请检查项目 config.toml"
+done
 if [ -n "$model" ]; then
   native_model="$(jq -er --arg agent "$agent" --arg alias "$model" '.models[$agent][$alias].model // empty' <<< "$config_json")" || die "${agent} 没有模型预设：${model}；请检查 config.toml"
   thinking="$(jq -r --arg agent "$agent" --arg alias "$model" '.models[$agent][$alias].thinking // empty' <<< "$config_json")"
@@ -266,16 +293,17 @@ need_command openssl
 if [ -n "$bug" ]; then need_command pingcode-cli; fi
 
 init_cmds=()
-dev_cmds=()
-setup_cmds=()
-readarray -d '' -t init_cmds < <(jq -j '.init[] | . + "\u0000"' <<< "$config_json")
-if [ -n "$dev_profile" ]; then
-  readarray -d '' -t dev_cmds < <(jq -j --arg profile "$dev_profile" '.dev_profiles[$profile][] | . + "\u0000"' <<< "$config_json")
-else
-  readarray -d '' -t dev_cmds < <(jq -j '.dev[] | . + "\u0000"' <<< "$config_json")
+readarray -d '' -t init_cmds < <(jq -j --argjson selected "$selected_labels_json" '
+  . as $config | (.init + [$selected[] as $name | $config.labels[$name].init // [] | .[]])[] | . + "\u0000"
+' <<< "$config_json")
+dev_groups='[]'
+if [ "$mode" = dev ]; then
+  dev_groups="$(jq -c --argjson selected "$selected_labels_json" '
+    . as $config | if $selected == [] then [{name: "默认", commands: .dev}]
+    else [$selected[] as $name | {name: $name, commands: ($config.labels[$name].dev // [])}] end |
+    map(select(.commands | length > 0))
+  ' <<< "$config_json")"
 fi
-setup_cmds=("${init_cmds[@]}")
-if [ "$mode" = dev ]; then setup_cmds+=("${dev_cmds[@]}"); fi
 
 # HTML 正文转为可读文本；图片使用 PingCode 转换后的首个 src，保留完整 URL。
 # 工单链接与图片链接不改写，因此可能含访问参数；仅对描述文本尽力过滤凭据。
@@ -312,9 +340,15 @@ else
 fi
 
 # 只按 --base 的分支名精确匹配；迭代背景是低优先级定位线索，置于具体任务之前。
-iteration_prompt="$(jq -r --arg base "$base_name" '.iteration_prompts[$base] // empty' <<< "$config_json")"
+iteration_prompt="$(jq -r --arg base "$base_name" '.iterations[$base].prompt // empty' <<< "$config_json")"
 if [ -n "$iteration_prompt" ]; then
   full_prompt="项目迭代背景（起点分支：${base_name}；仅供定位，具体工单或用户要求优先）："$'\n'"${iteration_prompt}"$'\n\n'"${full_prompt}"
+fi
+
+if jq -e '.labels | length > 0' <<< "$config_json" >/dev/null; then
+  full_prompt+=$'\n\n任务 Label（JSON）：'
+  full_prompt+="$selected_labels_json"
+  full_prompt+='。这是本次任务的最终选择，不根据文件路径或工单自动增减；Label 本身不授权推送或发布。'
 fi
 
 if [ "$mode" = submit ]; then
@@ -331,6 +365,12 @@ if [ "$mode" = submit ]; then
     full_prompt+="标题必须包含 ${bug}。"
   fi
   full_prompt+='请在描述中概述改动及验证结果；失败时报告原因，不要假称已发布。只使用项目已配置的认证，不要自行登录或修改凭据。'
+  if [ "${#labels[@]}" -gt 0 ]; then
+    full_prompt+=" 创建 ${review_name} 时必须附加以下精确 Label（JSON）：${selected_labels_json}。"
+    full_prompt+='按对应 CLI 的帮助传递 Label 参数，并正确引用每个名称；创建后核对实际 Label。Label 不存在或无权设置时明确报告，不要静默忽略，不要新建远端 Label。保留已有的其他 Label；若已创建但 Label 设置失败，只修复现有 PR/MR，不要重复创建。'
+  else
+    full_prompt+=' 本次不要求添加 Label，也不要清空已有 Label。'
+  fi
 fi
 
 printf '创建 Herdr worktree：%s（基于 %s）\n' "$branch" "$base_label" >&2
@@ -338,14 +378,12 @@ result="$(herdr worktree create --cwd "$repo" --branch "$branch" --base "$base" 
 pane="$(jq -er '.result.root_pane.pane_id | select(type == "string" and length > 0)' <<< "$result")" || die 'worktree 已创建，但无法读取 root_pane.pane_id；请手动检查 Herdr 状态'
 
 setup_pane=""
-if [ "${#setup_cmds[@]}" -gt 0 ]; then
+if [ "${#init_cmds[@]}" -gt 0 ] || [ "$dev_groups" != '[]' ]; then
   workspace="$(jq -er '.result.workspace.workspace_id | select(type == "string" and length > 0)' <<< "$result")" || die 'worktree 已创建，但无法读取 workspace_id；请手动检查 Herdr 状态'
   worktree_dir="$(jq -er '.result.worktree.path | select(type == "string" and length > 0)' <<< "$result")" || die 'worktree 已创建，但无法读取 worktree.path；项目命令和 agent 尚未启动'
   [ -d "$worktree_dir" ] || die "worktree 已创建，但目录不存在：$worktree_dir"
 
-  tab_label=Setup
-  if [ "$mode" = dev ]; then tab_label=Dev; fi
-  tab_result="$(herdr tab create --workspace "$workspace" --cwd "$worktree_dir" --label "$tab_label" --no-focus)" || die 'worktree 已创建，但项目命令 tab 创建失败；agent 尚未启动'
+  tab_result="$(herdr tab create --workspace "$workspace" --cwd "$worktree_dir" --label Setup --no-focus)" || die 'worktree 已创建，但项目命令 tab 创建失败；agent 尚未启动'
   setup_pane="$(jq -er '.result.root_pane.pane_id | select(type == "string" and length > 0)' <<< "$tab_result")" || die '项目命令 tab 已创建，但无法读取 pane ID；agent 尚未启动'
 
   setup_script=$'set -Ee\ntrap "echo htask：项目命令失败 >&2" ERR\n'
@@ -353,8 +391,37 @@ if [ "${#setup_cmds[@]}" -gt 0 ]; then
   setup_script+="$setup_env"
   for cmd in "${init_cmds[@]}"; do setup_script+="$cmd"$'\n'; done
   if [ "${#init_cmds[@]}" -gt 0 ]; then setup_script+=$'printf "htask：初始化完成\\n"\n'; fi
-  if [ "$mode" = dev ]; then
-    for cmd in "${dev_cmds[@]}"; do setup_script+="$cmd"$'\n'; done
+  # init 成功后由 Setup pane 派发独立服务；pane run 不等待服务退出。
+  if [ "$dev_groups" != '[]' ]; then
+    setup_script+=$'dispatch_failed=0\n'
+    setup_script+='launch_dev() {
+  local label="$1" command="$2" result pane
+  if ! result=$(herdr tab create --workspace "$3" --cwd "$WORKTREE_DIR" --label "Dev: $label" --no-focus); then
+    printf "htask：%s 的 Dev tab 创建失败，其他组继续；勿重跑整批\\n" "$label" >&2
+    return 1
+  fi
+  if ! pane=$(jq -er '\''.result.root_pane.pane_id | select(type == "string" and length > 0)'\'' <<< "$result"); then
+    printf "htask：%s 无法读取 Dev pane；请检查 tab\\n" "$label" >&2
+    return 1
+  fi
+  if ! herdr pane run "$pane" "$command"; then
+    printf "htask：%s 的启动命令派发失败；先检查 pane，勿盲目重试\\n" "$label" >&2
+    return 1
+  fi
+}
+'
+    readarray -t groups < <(jq -c '.[]' <<< "$dev_groups")
+    for group in "${groups[@]}"; do
+      label="$(jq -r '.name' <<< "$group")"
+      service_script=$'set -Ee\ntrap "echo htask：开发服务命令失败 >&2" ERR\n'
+      service_script+="$setup_env"
+      readarray -d '' -t commands < <(jq -j '.commands[] | . + "\u0000"' <<< "$group")
+      for cmd in "${commands[@]}"; do service_script+="$cmd"$'\n'; done
+      printf -v service_launch 'bash -c %q' "$service_script"
+      printf -v dispatch 'launch_dev %q %q %q || dispatch_failed=1\n' "$label" "$service_launch" "$workspace"
+      setup_script+="$dispatch"
+    done
+    setup_script+=$'exit "$dispatch_failed"\n'
   fi
   printf -v setup_launch 'bash -c %q' "$setup_script"
   herdr pane run "$setup_pane" "$setup_launch" >/dev/null || die "worktree 和项目命令 tab 已创建（pane: ${setup_pane}），但命令提交失败；请检查 tab，勿盲目重发"
@@ -380,7 +447,10 @@ if [ "${#agent_args[@]}" -gt 0 ]; then start_args+=(-- "${agent_args[@]}"); fi
 herdr "${start_args[@]}" >/dev/null || die "worktree 已创建（pane: ${pane}），但 agent 启动失败；请手动检查，未发送提示词"
 herdr agent prompt "$pane" "$full_prompt" >/dev/null || die "agent 已启动（pane: ${pane}），但提示词提交失败；先检查 agent 状态，勿盲目重发"
 printf '任务已启动：%s（%s，pane: %s）\n' "$branch" "$agent" "$pane"
-if [ -n "$setup_pane" ]; then printf '项目命令已派发至第二个 tab（pane: %s），执行结果请在该 tab 查看。\n' "$setup_pane"; fi
+if jq -e '.labels | length > 0' <<< "$config_json" >/dev/null; then
+  printf '任务 Label：%s\n' "$selected_labels_json"
+fi
+if [ -n "$setup_pane" ]; then printf '项目命令已派发至 Setup tab（pane: %s）；初始化和服务派发结果请查看该 tab，服务日志查看各 Dev tab。\n' "$setup_pane"; fi
 if [ -n "$bug" ]; then
   if pingcode-cli set-state "$bug" --state '处理中' >/dev/null; then
     printf 'PingCode Bug %s 已更新为处理中。\n' "$bug"

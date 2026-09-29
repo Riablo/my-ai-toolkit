@@ -115,12 +115,12 @@ run --branch codex-default --agent codex --prompt '你好'
 jq -se '.[1][3:] == ["--kind","codex","--pane","w9:p8","--","--dangerously-bypass-approvals-and-sandbox"]' "$HTASK_TEST_LOG" >/dev/null
 reset_logs
 assert_failure --branch no-dev-profile --mode dev --dev-profile c2v-editor --prompt 'hi'
-grep -q '没有 Dev 启动方案' "$tmp/err"
+grep -q '未知选项' "$tmp/err"
 reset_logs
 assert_failure --branch no-preset --model sol/xhigh --prompt 'hi'
 grep -q '没有模型预设' "$tmp/err"
 cat > "$XDG_CONFIG_HOME/htask/config.toml" <<'TOML'
-schema_version = 1
+schema_version = 2
 [models.pi."sol/xhigh"]
 model = "openai-codex/gpt-6-sol"
 thinking = "xhigh"
@@ -214,10 +214,11 @@ mkdir -p "$repo/.config/htask"
 git -C "$repo" push -q "$HTASK_TEST_REMOTE" main:v6.1.0
 git -C "$repo" push -q "$HTASK_TEST_REMOTE" main:v6.1.1
 cat > "$repo/.config/htask/config.toml" <<'TOML'
-schema_version = 1
-[iteration_prompts]
-"v6.1.0" = "示例背景：优先在 apps/sample-app/ 查找；具体任务优先。"
-"v6.2.0" = "另一个版本的背景"
+schema_version = 2
+[iterations."v6.1.0"]
+prompt = "示例背景：优先在 apps/sample-app/ 查找；具体任务优先。"
+[iterations."v6.2.0"]
+prompt = "另一个版本的背景"
 TOML
 reset_logs
 run --branch ctx-bug --base v6.1.0 --bug 720YUN-4764 --prompt '用户要求：修复主项目'
@@ -485,21 +486,34 @@ finally:
 PY
 jq -se '.[0][5] == "retry" and .[2][3] == "only task"' "$HTASK_TEST_LOG" >/dev/null
 
-# 配置仅从源仓库读取，所有命令在新 worktree 的第二个 tab 顺序执行。
+# 公共/Label init 只执行一次；init 成功后才派发独立的 Dev tab。
 mkdir -p "$repo/.config/htask"
 printf 'test-only local env\n' > "$repo/.env.development.local"
 cat > "$repo/.config/htask/config.toml" <<'TOML'
-schema_version = 1
+schema_version = 2
 init = ['cp "$SOURCE_DIR/.env.development.local" ./.env.development.local', 'codegraph index -f', 'pnpm install']
 dev = ['pnpm run start']
-[dev_profiles]
-"c2v-editor" = ['pnpm run start:c2v-editor']
+[labels.c2v]
+dev = ['pnpm run start:c2v-editor']
 TOML
 setup_command() { jq -sr 'map(select(.[0:2] == ["pane","run"]))[-1][3]' "$HTASK_TEST_LOG"; }
 run_setup_in_worktree() {
+  local before command
+  before="$(wc -l < "$HTASK_TEST_LOG")"
+  command="$(setup_command)"
   (cd "$HTASK_TEST_WORKTREES/$1" &&
-    if command -v zsh >/dev/null; then zsh -fc "$(setup_command)"; else bash -c "$(setup_command)"; fi
-  ) > "$tmp/setup-out" 2> "$tmp/setup-err"
+    if command -v zsh >/dev/null; then zsh -fc "$command"; else bash -c "$command"; fi
+  ) > "$tmp/setup-out" 2> "$tmp/setup-err" || return $?
+  # pane run 是异步派发；stub 不执行服务，在 init 协调脚本完成后并行运行所有派发的脚本。
+  local -a services=() pids=()
+  readarray -d '' -t services < <(jq -sj --argjson before "$before" '.[$before:][] | select(.[0:2] == ["pane","run"]) | .[3] + "\u0000"' "$HTASK_TEST_LOG")
+  for command in "${services[@]}"; do
+    (cd "$HTASK_TEST_WORKTREES/$1" && bash -c "$command") >> "$tmp/setup-out" 2>> "$tmp/setup-err" &
+    pids+=("$!")
+  done
+  local failed=0 pid
+  for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
+  return "$failed"
 }
 
 reset_logs
@@ -531,20 +545,20 @@ run_setup_in_worktree submit-init
 reset_logs
 run --branch dev-task --mode dev --prompt 'hi'
 jq -se --arg wt "$HTASK_TEST_WORKTREES/dev-task" 'length == 5 and
-  .[1] == ["tab","create","--workspace","w9","--cwd",$wt,"--label","Dev","--no-focus"] and
+  .[1] == ["tab","create","--workspace","w9","--cwd",$wt,"--label","Setup","--no-focus"] and
   (.[4][3] | contains("环境初始化正在另一个 tab") and (contains("（dev 模式）") | not))' "$HTASK_TEST_LOG" >/dev/null
 : > "$HTASK_SETUP_LOG"
 run_setup_in_worktree dev-task
 [ "$(< "$HTASK_SETUP_LOG")" = $'codegraph index -f\npnpm install\npnpm run start' ]
 
 reset_logs
-run --branch c2v-task --mode dev --dev-profile c2v-editor --prompt 'hi'
-jq -se 'length == 5 and .[1][7] == "Dev" and (.[4][3] | startswith("hi"))' "$HTASK_TEST_LOG" >/dev/null
+run --branch c2v-task --mode dev --label c2v --prompt 'hi'
+jq -se 'length == 5 and .[1][7] == "Setup" and (.[4][3] | startswith("hi"))' "$HTASK_TEST_LOG" >/dev/null
 : > "$HTASK_SETUP_LOG"
 run_setup_in_worktree c2v-task
 [ "$(< "$HTASK_SETUP_LOG")" = $'codegraph index -f\npnpm install\npnpm run start:c2v-editor' ]
 
-# 交互 dev 模式列出默认命令与具名方案；通过序号选择 C2V。
+# 交互列出 Label；通过序号选择 C2V。
 reset_logs
 python3 - "$cli" "$repo" <<'PY'
 import os, pty, select, subprocess, sys, time
@@ -555,7 +569,7 @@ os.close(slave)
 try:
     for expected, answer in [('仓库路径'.encode(), b'\n'), (b'--base', b'\n'),
                              (b'--bug', b'\n'), (b'--agent', b'\n'),
-                             (b'1) c2v-editor', b'1\n'), (b'--prompt', b'hi\n')]:
+                             (b'1) c2v', b'1\n'), (b'--prompt', b'hi\n')]:
         output = b''
         end = time.monotonic() + 10
         while expected not in output:
@@ -576,13 +590,14 @@ PY
 run_setup_in_worktree c2v-tty
 [ "$(< "$HTASK_SETUP_LOG")" = $'codegraph index -f\npnpm install\npnpm run start:c2v-editor' ]
 reset_logs
-assert_failure --branch invalid-profile --mode dev --dev-profile unknown --prompt 'hi'
-grep -q '没有 Dev 启动方案' "$tmp/err"
+assert_failure --branch invalid-label --mode dev --label unknown --prompt 'hi'
+grep -q '未声明的 Label' "$tmp/err"
 reset_logs
-assert_failure --branch wrong-mode --mode submit --dev-profile c2v-editor --prompt 'hi'
-grep -q '仅适用于 --mode dev' "$tmp/err"
+assert_failure --branch conflicting-labels --label c2v --no-labels --prompt 'hi'
 reset_logs
-assert_failure --branch no-mode --dev-profile c2v-editor --prompt 'hi'
+assert_failure --branch conflicting-labels-reverse --no-labels --label c2v --prompt 'hi'
+reset_logs
+assert_failure --branch no-mode --dev-profile c2v --prompt 'hi'
 
 reset_logs
 run --branch failed-init --mode dev --prompt 'hi'
@@ -593,7 +608,7 @@ fi
 [ "$(< "$HTASK_SETUP_LOG")" = 'codegraph index -f' ]
 grep -q '项目命令失败' "$tmp/setup-err"
 
-printf 'schema_version = 1\ninit = []\ndev = ["pnpm run start"]\n' > "$repo/.config/htask/config.toml"
+printf 'schema_version = 2\ninit = []\ndev = ["pnpm run start"]\n' > "$repo/.config/htask/config.toml"
 reset_logs
 run --branch only-dev-default --prompt 'hi'
 [ "$(wc -l < "$HTASK_TEST_LOG")" -eq 3 ]
@@ -604,11 +619,11 @@ run --branch only-dev-mode --mode dev --prompt 'hi'
 run_setup_in_worktree only-dev-mode
 [ "$(< "$HTASK_SETUP_LOG")" = 'pnpm run start' ]
 cat > "$repo/.config/htask/config.toml" <<'TOML'
-schema_version = 1
+schema_version = 2
 init = ['cp "$SOURCE_DIR/.env.development.local" ./.env.development.local', 'codegraph index -f', 'pnpm install']
 dev = ['pnpm run start']
-[dev_profiles]
-"c2v-editor" = ['pnpm run start:c2v-editor']
+[labels.c2v]
+dev = ['pnpm run start:c2v-editor']
 TOML
 
 reset_logs
@@ -624,19 +639,19 @@ reset_logs
 if HTASK_FAIL=run run --branch run-fail --prompt 'hi'; then exit 1; fi
 [ "$(wc -l < "$HTASK_TEST_LOG")" -eq 3 ]
 
-printf 'schema_version = 1\ninit = [42]\n' > "$repo/.config/htask/config.toml"
+printf 'schema_version = 2\ninit = [42]\n' > "$repo/.config/htask/config.toml"
 reset_logs
 assert_failure --branch bad-config --prompt 'hi'
 grep -q '配置无效' "$tmp/err"
-printf 'schema_version = 1\n[dev_profiles]\nc2v-editor = [""]\n' > "$repo/.config/htask/config.toml"
+printf 'schema_version = 2\n[labels.c2v]\ndev = [""]\n' > "$repo/.config/htask/config.toml"
 reset_logs
 assert_failure --branch bad-profile-config --prompt 'hi'
-grep -q 'dev_profiles.c2v-editor' "$tmp/err"
-printf 'schema_version = 1\n[iteration_prompts]\n"v6.1.0" = ["wrong type"]\n' > "$repo/.config/htask/config.toml"
+grep -q 'labels.c2v.dev' "$tmp/err"
+printf 'schema_version = 2\n[iterations."v6.1.0"]\nprompt = ["wrong type"]\n' > "$repo/.config/htask/config.toml"
 reset_logs
 assert_failure --branch bad-iteration-config --prompt 'hi'
-grep -q 'iteration_prompts.v6.1.0' "$tmp/err"
-printf 'schema_version = 1\n[iteration_prompts]\n"v6.1.0" = "  "\n' > "$repo/.config/htask/config.toml"
+grep -q 'iterations.v6.1.0' "$tmp/err"
+printf 'schema_version = 2\n[iterations."v6.1.0"]\nprompt = "  "\n' > "$repo/.config/htask/config.toml"
 reset_logs
 assert_failure --branch empty-iteration-config --prompt 'hi'
 rm "$repo/.config/htask/config.toml"
@@ -646,26 +661,20 @@ run --branch no-config --mode dev --prompt 'hi'
 
 # 项目数组覆盖全局，未声明的数组继承；同名预设只覆盖声明的字段。
 cat > "$XDG_CONFIG_HOME/htask/config.toml" <<'TOML'
-schema_version = 1
+schema_version = 2
 init = ['codegraph global']
 dev = ['pnpm run start']
-[dev_profiles]
-"c2v-editor" = ['pnpm run start:global-c2v']
-extension = ['pnpm run start:extension']
-[iteration_prompts]
-"v6.1.0" = "全局迭代背景"
-"v6.2.0" = "全局第二版本"
 [models.pi."sol/xhigh"]
 model = 'openai-codex/gpt-6-sol'
 thinking = 'xhigh'
 TOML
 cat > "$repo/.config/htask/config.toml" <<'TOML'
-schema_version = 1
+schema_version = 2
 init = ['codegraph project']
-[dev_profiles]
-"c2v-editor" = ['pnpm run start:project-c2v']
-[iteration_prompts]
-"v6.1.0" = "项目迭代背景"
+[labels.c2v]
+dev = ['pnpm run start:project-c2v']
+[iterations."v6.1.0"]
+prompt = "项目迭代背景"
 [models.pi."sol/xhigh"]
 thinking = 'low'
 TOML
@@ -676,18 +685,13 @@ jq -se '.[3][3:] == ["--kind","pi","--pane","w9:p8","--","--provider","openai-co
 run_setup_in_worktree layered
 [ "$(< "$HTASK_SETUP_LOG")" = $'codegraph project\npnpm run start' ]
 python3 "$script_dir/config.py" "$XDG_CONFIG_HOME/htask/config.toml" "$repo/.config/htask/config.toml" |
-  jq -e '.iteration_prompts["v6.1.0"] == "项目迭代背景" and .iteration_prompts["v6.2.0"] == "全局第二版本"' >/dev/null
+  jq -e '.iterations["v6.1.0"].prompt == "项目迭代背景"' >/dev/null
 reset_logs
-run --branch override-profile --mode dev --dev-profile c2v-editor --prompt 'hi'
+run --branch override-profile --mode dev --label c2v --prompt 'hi'
 : > "$HTASK_SETUP_LOG"
 run_setup_in_worktree override-profile
 [ "$(< "$HTASK_SETUP_LOG")" = $'codegraph project\npnpm run start:project-c2v' ]
-reset_logs
-run --branch inherited-profile --mode dev --dev-profile extension --prompt 'hi'
-: > "$HTASK_SETUP_LOG"
-run_setup_in_worktree inherited-profile
-[ "$(< "$HTASK_SETUP_LOG")" = $'codegraph project\npnpm run start:extension' ]
-printf 'schema_version = 1\ninit = []\ndev = []\n' > "$repo/.config/htask/config.toml"
+printf 'schema_version = 2\ninit = []\ndev = []\n' > "$repo/.config/htask/config.toml"
 reset_logs
 run --branch cleared --mode dev --prompt 'hi'
 [ "$(wc -l < "$HTASK_TEST_LOG")" -eq 3 ]
@@ -698,7 +702,7 @@ reset_logs
 assert_failure --branch legacy --prompt 'hi'
 grep -q '旧版 JSON' "$tmp/err"
 rm "$repo/.config/htask/config.json"
-printf 'schema_version = 1\n[models.pi."new"]\nthinking = "low"\n' > "$repo/.config/htask/config.toml"
+printf 'schema_version = 2\n[models.pi."new"]\nthinking = "low"\n' > "$repo/.config/htask/config.toml"
 reset_logs
 assert_failure --branch incomplete-model --prompt 'hi'
 grep -q '缺少 model' "$tmp/err"
@@ -714,5 +718,8 @@ ln -s "$cli" "$tmp/bin/htask-link"
 reset_logs
 (cd "$repo" && bash "$tmp/bin/htask-link" --branch via-link --prompt 'hi') > "$tmp/out" 2> "$tmp/err"
 [ "$(wc -l < "$HTASK_TEST_LOG")" -eq 3 ]
+
+# Label 新行为、并发派发与配置失败场景。
+source "$script_dir/test_labels.bash"
 
 echo 'htask 回归测试通过'

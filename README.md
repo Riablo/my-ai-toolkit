@@ -64,7 +64,7 @@ Skills 用于承载可复用的工作流和任务约定。简单 CLI 直接查�
 | [clipfmt](cli/clipfmt/) | macOS 剪贴板格式化：Jev 分流、本地 JSON/代码/时间/URL/表格及图片转换，DeepSeek 兜底整理错乱空白与换行 |
 | [cloudsaver-cli](cli/cloudsaver-cli/) | 网盘资源搜索与 115 转存工具（Telegram 搜索 / 115 转存） |
 | [freecurrency-cli](cli/freecurrency-cli/) | Open Exchange Rates 汇率工具（金额换算 / 最新汇率 / 本地缓存） |
-| [htask](cli/htask/) | 创建 Herdr worktree 与 Pi/Codex 任务，支持 PingCode bug、项目初始化/Dev tab 和 PR/MR 交付 |
+| [htask](cli/htask/) | 创建 Herdr worktree 与 Pi/Codex 任务，支持 PingCode bug、Label 初始化/并行开发服务和带 Label 的 PR/MR 交付 |
 | [myskills](cli/myskills/) | 管理 AI Skills 的链接、安装与卸载（list / link / install / unlink / uninstall / status） |
 | [pano-json](cli/pano-json/) | 下载 720 云作品源码中 `window.json` 指向的原始 JSON |
 | [pingcode-cli](cli/pingcode-cli/) | 使用 PingCode 官方 API 查询与更新 bugs、查看评论及诊断配置 |
@@ -117,7 +117,7 @@ htask                                                  # 交互式创建
 htask --base v6.1.0 --branch fix-hotspot --bug 720YUN-4764 --prompt '补充要求'
 ```
 
-更多选项和使用边界见 [htask 文档](cli/htask/README.md) 或 `htask --help`。
+更多选项和使用边界见 [htask 文档](cli/htask/README.md) 或 `htask --help`；配置写法见 [带注释的 TOML 示例](cli/htask/config.example.toml)。
 
 ## License
 

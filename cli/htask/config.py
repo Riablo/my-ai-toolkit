@@ -22,7 +22,20 @@ def check_keys(value: dict, allowed: set[str], path: Path, label: str) -> None:
         fail(path, f"{label} 有未知字段：{', '.join(sorted(unknown))}")
 
 
-def load(path: Path) -> dict:
+def commands(value: object, path: Path, label: str) -> None:
+    if not isinstance(value, list) or any(
+        not isinstance(command, str) or not command.strip() or "\0" in command for command in value
+    ):
+        fail(path, f"{label} 必须是非空命令组成的字符串数组（可为空数组）")
+
+
+def valid_label(value: object) -> bool:
+    return (isinstance(value, str) and bool(value.strip()) and value == value.strip()
+            and not value.startswith("-") and "," not in value
+            and all(ord(char) >= 32 and ord(char) != 127 for char in value))
+
+
+def load(path: Path, *, project: bool = False) -> dict:
     legacy = path.with_suffix(".json")
     if legacy.exists() or legacy.is_symlink():
         fail(legacy, f"旧版 JSON 配置仍存在；请迁移到 {path} 并移走旧文件")
@@ -35,28 +48,38 @@ def load(path: Path) -> dict:
             data = tomllib.load(stream)
     except tomllib.TOMLDecodeError as exc:
         fail(path, f"TOML 语法错误：{exc}")
-    if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
-        fail(path, "schema_version 必须为 1")
-    check_keys(data, {"schema_version", "init", "dev", "dev_profiles", "iteration_prompts", "models"}, path, "根配置")
+    if type(data.get("schema_version")) is not int or data["schema_version"] != 2:
+        fail(path, "schema_version 必须为 2；请按 cli/htask/config.example.toml 迁移配置")
+    check_keys(data, {"schema_version", "init", "dev", "labels", "iterations", "models"}, path, "根配置")
+    if not project and ("labels" in data or "iterations" in data):
+        fail(path, "labels / iterations 仅允许在项目配置中声明")
     for name in ("init", "dev"):
-        if name in data and (not isinstance(data[name], list) or any(
-            not isinstance(command, str) or not command.strip() for command in data[name]
-        )):
-            fail(path, f"{name} 必须是非空命令组成的字符串数组（可为空数组）")
-    profiles = data.get("dev_profiles", {})
-    if not isinstance(profiles, dict):
-        fail(path, "dev_profiles 必须是表")
-    for name, commands in profiles.items():
-        if not ALIAS.fullmatch(name) or not isinstance(commands, list) or not commands or any(
-            not isinstance(command, str) or not command.strip() for command in commands
-        ):
-            fail(path, f"dev_profiles.{name} 必须是非空命令字符串数组，名称不能含空格")
-    iterations = data.get("iteration_prompts", {})
+        if name in data:
+            commands(data[name], path, name)
+    labels = data.get("labels", {})
+    if not isinstance(labels, dict):
+        fail(path, "labels 必须是表")
+    for name, spec in labels.items():
+        if not valid_label(name) or not isinstance(spec, dict):
+            fail(path, f"Label 名称或结构无效：{name}（不能含逗号、控制字符、首尾空白或以 - 开头）")
+        check_keys(spec, {"init", "dev"}, path, f"labels.{name}")
+        for phase, value in spec.items():
+            commands(value, path, f"labels.{name}.{phase}")
+    iterations = data.get("iterations", {})
     if not isinstance(iterations, dict):
-        fail(path, "iteration_prompts 必须是表")
-    for branch, prompt in iterations.items():
-        if not ALIAS.fullmatch(branch) or not isinstance(prompt, str) or not prompt.strip():
-            fail(path, f"iteration_prompts.{branch} 必须是非空提示词字符串，键为起点分支名")
+        fail(path, "iterations 必须是表")
+    for branch, spec in iterations.items():
+        if not ALIAS.fullmatch(branch) or not isinstance(spec, dict):
+            fail(path, f"iterations.{branch} 必须是表，键为起点分支名")
+        check_keys(spec, {"prompt", "labels"}, path, f"iterations.{branch}")
+        if "prompt" in spec and (not isinstance(spec["prompt"], str) or not spec["prompt"].strip() or "\0" in spec["prompt"]):
+            fail(path, f"iterations.{branch}.prompt 必须是非空字符串")
+        selected = spec.get("labels", [])
+        if not isinstance(selected, list) or any(not valid_label(name) for name in selected):
+            fail(path, f"iterations.{branch}.labels 必须是 Label 名称数组")
+        for name in selected:
+            if name not in labels:
+                fail(path, f"iterations.{branch}.labels 引用了未声明的 Label：{name}")
     models = data.get("models", {})
     if not isinstance(models, dict):
         fail(path, "models 必须是表")
@@ -77,14 +100,15 @@ def load(path: Path) -> dict:
 
 
 def main(global_path: Path, project_path: Path) -> None:
-    merged = {"init": [], "dev": [], "dev_profiles": {}, "iteration_prompts": {}, "models": {agent: {} for agent in AGENTS}}
-    for path in (global_path, project_path):
-        data = load(path)
+    merged = {"init": [], "dev": [], "labels": {}, "iterations": {}, "models": {agent: {} for agent in AGENTS}}
+    for path, project in ((global_path, False), (project_path, True)):
+        data = load(path, project=project)
         for name in ("init", "dev"):
             if name in data:
                 merged[name] = data[name]
-        merged["dev_profiles"].update(data.get("dev_profiles", {}))
-        merged["iteration_prompts"].update(data.get("iteration_prompts", {}))
+        if project:
+            merged["labels"] = data.get("labels", {})
+            merged["iterations"] = data.get("iterations", {})
         for agent, presets in data.get("models", {}).items():
             for alias, spec in presets.items():
                 merged["models"][agent].setdefault(alias, {}).update(spec)
