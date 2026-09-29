@@ -497,10 +497,32 @@ dev = ['pnpm run start']
 dev = ['pnpm run start:c2v-editor']
 TOML
 setup_command() { jq -sr 'map(select(.[0:2] == ["pane","run"]))[-1][3]' "$HTASK_TEST_LOG"; }
+# 模拟新 shell 就绪前的 canonical PTY 输入；长命令会在 macOS 丢失尾部和回车。
+assert_terminal_submission() {
+  python3 - "$1" <<'PY'
+import os, pty, select, sys, termios
+payload = sys.argv[1].encode() + b'\n'
+assert len(payload) <= 1024, f'终端命令超过安全输入上限：{len(payload)} 字节'
+master, slave = pty.openpty()
+try:
+    attrs = termios.tcgetattr(slave)
+    attrs[3] |= termios.ICANON
+    attrs[3] &= ~termios.ECHO
+    termios.tcsetattr(slave, termios.TCSANOW, attrs)
+    os.write(master, payload)
+    ready, _, _ = select.select([slave], [], [], 1)
+    received = os.read(slave, 8192) if ready else b''
+    assert received == payload, '终端命令或提交回车被截断'
+finally:
+    os.close(master)
+    os.close(slave)
+PY
+}
 run_setup_in_worktree() {
   local before command
   before="$(wc -l < "$HTASK_TEST_LOG")"
   command="$(setup_command)"
+  assert_terminal_submission "$command" || return $?
   (cd "$HTASK_TEST_WORKTREES/$1" &&
     if command -v zsh >/dev/null; then zsh -fc "$command"; else bash -c "$command"; fi
   ) > "$tmp/setup-out" 2> "$tmp/setup-err" || return $?
@@ -508,6 +530,7 @@ run_setup_in_worktree() {
   local -a services=() pids=()
   readarray -d '' -t services < <(jq -sj --argjson before "$before" '.[$before:][] | select(.[0:2] == ["pane","run"]) | .[3] + "\u0000"' "$HTASK_TEST_LOG")
   for command in "${services[@]}"; do
+    assert_terminal_submission "$command" || return $?
     (cd "$HTASK_TEST_WORKTREES/$1" && bash -c "$command") >> "$tmp/setup-out" 2>> "$tmp/setup-err" &
     pids+=("$!")
   done
@@ -557,6 +580,34 @@ jq -se 'length == 5 and .[1][7] == "Setup" and (.[4][3] | startswith("hi"))' "$H
 : > "$HTASK_SETUP_LOG"
 run_setup_in_worktree c2v-task
 [ "$(< "$HTASK_SETUP_LOG")" = $'codegraph index -f\npnpm install\npnpm run start:c2v-editor' ]
+
+# 超长用户命令也不进入终端输入；脚本在私有 Git 元数据目录，工作区保持干净。
+cp "$repo/.config/htask/config.toml" "$tmp/config-before-long.toml"
+python3 - "$repo/.config/htask/config.toml" <<'PY'
+from pathlib import Path
+import sys
+Path(sys.argv[1]).write_text('schema_version = 2\ninit = [\'codegraph ' + 'i' * 5000 + '\']\ndev = [\'pnpm ' + 'd' * 5000 + '\']\n')
+PY
+reset_logs
+run --branch long-scripts --mode dev --prompt 'hi'
+: > "$HTASK_SETUP_LOG"
+run_setup_in_worktree long-scripts
+python3 - "$HTASK_SETUP_LOG" "$HTASK_TEST_LOG" "$repo" <<'PY'
+from pathlib import Path
+import json, shlex, stat, sys
+assert Path(sys.argv[1]).read_text().splitlines() == ['codegraph ' + 'i' * 5000, 'pnpm ' + 'd' * 5000]
+for call in map(json.loads, Path(sys.argv[2]).read_text().splitlines()):
+    if call[:2] != ['pane', 'run']:
+        continue
+    args = shlex.split(call[3])
+    assert len(args) == 2 and args[0] == 'bash', args
+    script = Path(args[1])
+    assert script.is_file() and script.is_relative_to(Path(sys.argv[3]) / '.git')
+    assert stat.S_IMODE(script.stat().st_mode) == 0o600
+    assert stat.S_IMODE(script.parent.stat().st_mode) == 0o700
+PY
+[ -z "$(git -C "$HTASK_TEST_WORKTREES/long-scripts" status --porcelain)" ]
+cp "$tmp/config-before-long.toml" "$repo/.config/htask/config.toml"
 
 # 交互列出 Label；通过序号选择 C2V。
 reset_logs

@@ -46,6 +46,16 @@ EOF
 die() { printf '错误：%s\n' "$1" >&2; exit 1; }
 need_command() { command -v "$1" >/dev/null 2>&1 || die "缺少依赖：$1"; }
 
+# 新 tab 的 shell 就绪前，macOS canonical PTY 会截断长输入；只派发短文件入口。
+script_launch() {
+  local path="$launch_dir/$1" launch LC_ALL=C
+  (umask 077; printf '%s' "$2" > "$path") || return 1
+  printf -v launch 'bash %q' "$path"
+  # 包含提交回车也必须落在 1024 字节内；极长路径明确失败，不派发残缺命令。
+  [ "${#launch}" -lt 1024 ] || { printf '错误：脚本启动路径过长，无法安全派发\n' >&2; return 1; }
+  printf '%s' "$launch"
+}
+
 repo=""
 base=""
 branch=""
@@ -383,6 +393,10 @@ if [ "${#init_cmds[@]}" -gt 0 ] || [ "$dev_groups" != '[]' ]; then
   worktree_dir="$(jq -er '.result.worktree.path | select(type == "string" and length > 0)' <<< "$result")" || die 'worktree 已创建，但无法读取 worktree.path；项目命令和 agent 尚未启动'
   [ -d "$worktree_dir" ] || die "worktree 已创建，但目录不存在：$worktree_dir"
 
+  # 放入该 worktree 私有的 Git 元数据目录，不污染工作区，随 worktree 删除清理。
+  worktree_git_dir="$(git -C "$worktree_dir" rev-parse --absolute-git-dir)" || die '无法读取 worktree Git 目录；项目命令和 agent 尚未启动'
+  launch_dir="$(mktemp -d "$worktree_git_dir/htask.XXXXXXXX")" || die '无法创建项目脚本目录；项目命令和 agent 尚未启动'
+
   tab_result="$(herdr tab create --workspace "$workspace" --cwd "$worktree_dir" --label Setup --no-focus)" || die 'worktree 已创建，但项目命令 tab 创建失败；agent 尚未启动'
   setup_pane="$(jq -er '.result.root_pane.pane_id | select(type == "string" and length > 0)' <<< "$tab_result")" || die '项目命令 tab 已创建，但无法读取 pane ID；agent 尚未启动'
 
@@ -411,19 +425,21 @@ if [ "${#init_cmds[@]}" -gt 0 ] || [ "$dev_groups" != '[]' ]; then
 }
 '
     readarray -t groups < <(jq -c '.[]' <<< "$dev_groups")
+    service_index=0
     for group in "${groups[@]}"; do
       label="$(jq -r '.name' <<< "$group")"
       service_script=$'set -Ee\ntrap "echo htask：开发服务命令失败 >&2" ERR\n'
       service_script+="$setup_env"
       readarray -d '' -t commands < <(jq -j '.commands[] | . + "\u0000"' <<< "$group")
       for cmd in "${commands[@]}"; do service_script+="$cmd"$'\n'; done
-      printf -v service_launch 'bash -c %q' "$service_script"
+      service_index=$((service_index + 1))
+      service_launch="$(script_launch "dev-$service_index.bash" "$service_script")" || die '开发服务脚本准备失败；项目命令和 agent 尚未启动'
       printf -v dispatch 'launch_dev %q %q %q || dispatch_failed=1\n' "$label" "$service_launch" "$workspace"
       setup_script+="$dispatch"
     done
     setup_script+=$'exit "$dispatch_failed"\n'
   fi
-  printf -v setup_launch 'bash -c %q' "$setup_script"
+  setup_launch="$(script_launch setup.bash "$setup_script")" || die 'Setup 脚本准备失败；项目命令和 agent 尚未启动'
   herdr pane run "$setup_pane" "$setup_launch" >/dev/null || die "worktree 和项目命令 tab 已创建（pane: ${setup_pane}），但命令提交失败；请检查 tab，勿盲目重发"
   if [ "${#init_cmds[@]}" -gt 0 ]; then
     full_prompt+=$'\n\n环境初始化正在另一个 tab 执行；需要依赖或环境文件时，先确认初始化完成。'
