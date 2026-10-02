@@ -63,6 +63,7 @@ Skills 用于承载可复用的工作流和任务约定。简单 CLI 直接查�
 | --- | --- |
 | [clipfmt](cli/clipfmt/) | macOS 剪贴板格式化：Jev 分流、本地 JSON/代码/时间/URL/表格及图片转换，DeepSeek 兜底整理错乱空白与换行 |
 | [cloudsaver-cli](cli/cloudsaver-cli/) | 网盘资源搜索与 115 转存工具（Telegram 搜索 / 115 转存） |
+| [config-sync](cli/config-sync/) | 一条命令按 TOML 单向推送全部配置文件 / 目录到多台 SSH 主机，覆盖前备份，支持主机筛选、清理、预览和动态补全 |
 | [freecurrency-cli](cli/freecurrency-cli/) | Open Exchange Rates 汇率工具（金额换算 / 最新汇率 / 本地缓存） |
 | [htask](cli/htask/) | 创建 Herdr worktree 与 Pi/Codex 任务，支持 PingCode bug、Label 初始化/并行开发服务和带 Label 的 PR/MR 交付 |
 | [myskills](cli/myskills/) | 管理 AI Skills 的链接、安装与卸载（list / link / install / unlink / uninstall / status） |
@@ -118,6 +119,27 @@ htask --base v6.1.0 --branch fix-hotspot --bug 720YUN-4764 --prompt '补充要�
 ```
 
 更多选项和使用边界见 [htask 文档](cli/htask/README.md) 或 `htask --help`；配置写法见 [带注释的 TOML 示例](cli/htask/config.example.toml)。
+
+### config-sync 用法
+
+安装后运行 `config-sync init`，在 `~/.config/config-sync/config.toml` 创建全注释模板，不覆盖已有配置。取消所需表头与配置项的注释，修改主机 / 路径即可使用，例如：
+
+```toml
+[hosts.home.files]
+htask = "~/.config/htask/config.toml"       # 两端同路径
+zsh = ["~/.zshrc", "~/.config/zsh/.zshrc"]  # [本机路径, 目标路径]
+[hosts.home.dirs]
+nvim = "~/.config/nvim/"                   # 末尾 / 可有可无
+```
+
+```bash
+config-sync --dry-run    # 校验全部来源并显示计划，不联网
+config-sync              # 同步所有主机配置的全部文件和目录
+config-sync --host home  # 同步 home 配置的全部内容，--host 可重复
+config-sync clean        # 清理当前配置涉及的所有目标的备份
+```
+
+配置中的键只是便于阅读和日志定位的标签，不需要输入名称参数。覆盖前保存整个原文件 / 目录；**目录是完整镜像，目标多余内容会删除**。安装、备份和清理边界见 [config-sync 文档](cli/config-sync/README.md)，更多主机写法见 [TOML 示例](cli/config-sync/config.example.toml)。
 
 ## License
 

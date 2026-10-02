@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+config-sync - 按 TOML 配置单向推送文件 / 目录，覆盖前备份
+
+用法:
+  config-sync init [--config 路径]         创建全注释配置模板，不覆盖已有配置
+  config-sync [-H 主机]... [--dry-run]     同步所有已配置的文件和目录
+  config-sync list                         列出主机、同步项及两端路径
+  config-sync clean [-H 主机]... [--dry-run]
+
+选项:
+  -H, --host 主机     限定目标主机，可重复；省略时同步所有主机上的全部配置项
+  --config 路径      指定 TOML，默认 ~/.config/config-sync/config.toml
+                     支持 XDG_CONFIG_HOME
+  --dry-run          仅校验并显示计划，不连接 SSH，也不创建备份或写入
+  -h, --help         显示帮助
+
+配置示例:
+  [hosts.home.files]
+  htask = "~/.config/htask/config.toml"
+  zsh = ["~/.zshrc", "~/.config/zsh/.zshrc"]  # [本机, 目标]
+  [hosts.home.dirs]
+  nvim = "~/.config/nvim"                     # 有无末尾 / 均可
+
+主机名称默认也是 SSH 别名；可在 [hosts.名称] 中设置 ssh = "user@host"。
+单路径表示两端同路径，~ 分别指各自主机的家目录。
+目录是完整镜像：目标多余内容会删除；每次推送前备份整个已有文件 / 目录。
+clean 直接删除当前配置所涉及目标的专用备份，不再确认，不扫描其他路径。
+配置不存在或没有同步项时不执行任何操作。只依赖本机配置，不做反向同步。
+EOF
+}
+
+die() { printf '错误：%s\n' "$1" >&2; exit 1; }
+quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+
+action=sync
+hosts=()
+dry_run=0
+config="${XDG_CONFIG_HOME:-$HOME/.config}/config-sync/config.toml"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    init|clean|list)
+      [[ "$action" == sync ]] || die "只能指定一个子命令"
+      action="$1"; shift ;;
+    -H|--host)
+      [[ $# -ge 2 && -n "$2" ]] || die "$1 需要主机名称"
+      hosts+=("$2"); shift 2 ;;
+    --config)
+      [[ $# -ge 2 && -n "$2" ]] || die "--config 需要路径"
+      config="$2"; shift 2 ;;
+    --dry-run) dry_run=1; shift ;;
+    --_complete)
+      [[ $# -ge 2 ]] || die "缺少补全类型"
+      case "$2" in hosts) action=complete-hosts ;; *) die "未知补全类型" ;; esac
+      shift 2 ;;
+    -*) die "未知选项：$1" ;;
+    *) die "不接受同步项名称：$1；直接执行 config-sync 同步全部内容" ;;
+  esac
+done
+if [[ "$action" == init ]]; then
+  [[ ${#hosts[@]} -eq 0 && $dry_run -eq 0 ]] || die "init 只接受 --config，不接受 --host 或 --dry-run"
+fi
+(( BASH_VERSINFO[0] >= 5 )) || die "需要 Bash 5+（brew install bash）"
+command -v python3 >/dev/null 2>&1 || die "需要 Python 3.11+（brew install python）"
+
+# Resolve installed symlinks so the parser remains next to this entry point.
+source_file="${BASH_SOURCE[0]}"
+while [[ -L "$source_file" ]]; do
+  dir="$(cd -P "$(dirname "$source_file")" && pwd)"
+  source_file="$(readlink "$source_file")"
+  [[ "$source_file" == /* ]] || source_file="$dir/$source_file"
+done
+dir="$(cd -P "$(dirname "$source_file")" && pwd)"
+plan="$(python3 "$dir/config.py" "$config" "$action" --hosts "${hosts[@]}")" || exit 1
+case "$action" in
+  init) printf '%s\n' "$plan"; exit 0 ;;
+  complete-*) [[ -z "$plan" ]] || printf '%s\n' "$plan"; exit 0 ;;
+  list) printf '%s\n' "${plan:-没有配置同步项：$config}"; exit 0 ;;
+esac
+[[ -n "$plan" ]] || { printf '没有配置同步项，不执行操作：%s\n' "$config"; exit 0; }
+readarray -t rows <<< "$plan"
+
+if (( ! dry_run )); then
+  command -v ssh >/dev/null 2>&1 || die "缺少 ssh"
+  if [[ "$action" == sync ]]; then
+    command -v rsync >/dev/null 2>&1 || die "缺少 rsync"
+  fi
+fi
+
+# POSIX sh on the receiver: no remote Python or Bash required.
+remote_script="$(cat <<'REMOTE'
+set -eu
+action=$1 kind=$2 target=$3 stamp=$4
+case "$target" in '~/'*) target="$HOME/${target#\~/}" ;; esac
+parent=${target%/*}
+[ -n "$parent" ] || parent=/
+backup="$parent/.${target##*/}.config-sync-backups"
+marker="$backup/.owner"
+fail() { printf '错误：%s\n' "$1" >&2; exit 1; }
+exists() { [ -e "$1" ] || [ -L "$1" ]; }
+if exists "$backup"; then
+  [ -d "$backup" ] && [ ! -L "$backup" ] && [ -f "$marker" ] && [ ! -L "$marker" ] \
+    && [ "$(cat "$marker")" = "config-sync:v1:$target" ] \
+    || fail "备份路径不是本工具为该目标创建的目录，拒绝操作：$backup"
+fi
+if [ "$action" = clean ]; then
+  if exists "$backup"; then
+    rm -rf "$backup"
+    printf '已清理：%s\n' "$backup"
+  else
+    printf '无备份：%s\n' "$target"
+  fi
+  exit
+fi
+if exists "$target"; then
+  [ ! -L "$target" ] || fail "目标是软链接，拒绝覆盖：$target"
+  case "$kind" in
+    files) [ -f "$target" ] || fail "目标不是普通文件：$target" ;;
+    dirs) [ -d "$target" ] || fail "目标不是目录：$target" ;;
+  esac
+  umask 077
+  if ! exists "$backup"; then
+    mkdir "$backup"
+    printf 'config-sync:v1:%s\n' "$target" > "$marker"
+  fi
+  snapshot="$backup/$stamp"
+  ! exists "$snapshot" || fail "备份名称冲突：$snapshot"
+  cp -pR "$target" "$snapshot"
+  printf '已备份：%s\n' "$snapshot" >&2
+fi
+mkdir -p "$parent"
+printf '%s\n' "$target"
+REMOTE
+)"
+
+remote() {
+  local command="sh -s --" value
+  for value in "$@"; do command+=" $(quote "$value")"; done
+  ssh -o BatchMode=yes "$endpoint" "$command" <<< "$remote_script"
+}
+
+stamp=""
+if [[ "$action" == sync ]] && (( ! dry_run )); then
+  stamp="$(python3 -c 'import datetime, secrets; print(datetime.datetime.now().strftime("%Y%m%dT%H%M%S") + "-" + secrets.token_hex(6))')"
+fi
+for (( i=0; i<${#rows[@]}; i+=6 )); do
+  host="${rows[i]}" endpoint="${rows[i+1]}" kind="${rows[i+2]}"
+  name="${rows[i+3]}" source_path="${rows[i+4]}" target="${rows[i+5]}"
+  if [[ "$action" == clean ]]; then
+    if (( dry_run )); then
+      printf '[计划] %s (%s): 清理 %s 的专用备份\n' "$host" "$endpoint" "$target"
+    else
+      printf '[%s/%s] ' "$host" "$name"
+      remote clean "$kind" "$target" "" || die "$host/$name 清理失败"
+    fi
+    continue
+  fi
+  description="文件，先备份"
+  [[ "$kind" != dirs ]] || description="目录镜像，先备份并删除目标多余内容"
+  printf '%s[%s/%s] %s → %s:%s (%s)\n' \
+    "$([[ $dry_run == 1 ]] && printf '[计划] ' || :)" \
+    "$host" "$name" "$source_path" "$endpoint" "$target" "$description"
+  (( ! dry_run )) || continue
+  target="$(remote prepare "$kind" "$target" "$stamp")" || die "$host/$name 备份或目标检查失败，未传输"
+  options=(-rltpc --8-bit-output --itemize-changes -e 'ssh -o BatchMode=yes')
+  if [[ "$kind" == dirs ]]; then
+    source_path+="/"; target+="/"; options+=(--delete)
+  fi
+  # New rsync defaults to escaping shell arguments itself; request classic behavior
+  # so our POSIX quoting also works with macOS openrsync / rsync 2.6.9.
+  RSYNC_OLD_ARGS=1 RSYNC_PROTECT_ARGS=0 rsync "${options[@]}" -- "$source_path" "$endpoint:$(quote "$target")" \
+    || die "$host/$name 同步失败；已创建的备份保留，后续同步项未执行"
+done

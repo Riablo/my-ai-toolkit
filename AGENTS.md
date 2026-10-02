@@ -54,6 +54,7 @@ scripts/install.sh               # 安装脚本，软链 CLI 工具 + zsh 补全
 | skill-auto / 调用策略 | `bash cli/skill-auto/test_skill_auto.bash` |
 | wt-land | `bash cli/wt-land/test_wt_land.bash` |
 | testpage-cli | `bash cli/testpage-cli/test_testpage_cli.bash` |
+| config-sync | `python3 cli/config-sync/test_config_sync.py` |
 | pingcode-cli | `bash cli/pingcode-cli/test_pingcode_cli.bash`、`bash cli/pingcode-cli/test_pingcode_performance.bash` |
 | jenkins-builder-cli | `uv run cli/jenkins-builder-cli/test_main.py` |
 | readlater-cli | `python3 cli/readlater-cli/test_main.py` |

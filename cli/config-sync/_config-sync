@@ -1,0 +1,30 @@
+#compdef config-sync
+
+_config-sync_hosts() {
+  local config="${XDG_CONFIG_HOME:-${HOME}/.config}/config-sync/config.toml"
+  local index
+  for (( index=2; index < ${#words}; index++ )); do
+    [[ "${words[index]}" != --config ]] || config="${words[index+1]}"
+  done
+  local -a hosts
+  hosts=("${(@f)$(config-sync --config "$config" --_complete hosts 2>/dev/null)}")
+  compadd "$@" -a hosts
+}
+
+_config-sync() {
+  local context state state_descr line
+  typeset -A opt_args
+  _arguments -s \
+    '(-h --help)'{-h,--help}'[显示帮助]' \
+    '*-H[限定目标主机，可重复]:主机:_config-sync_hosts' \
+    '*--host[限定目标主机，可重复]:主机:_config-sync_hosts' \
+    '--config[指定 TOML 配置]:配置文件:_files' \
+    '--dry-run[只校验并显示计划，不连接 SSH]' \
+    '1:子命令:->command'
+  if [[ "$state" == command ]]; then
+    local -a commands=('init:创建全注释配置模板' 'clean:清理所有已配置目标的备份' 'list:列出主机和同步项')
+    _describe '子命令' commands
+  fi
+}
+
+_config-sync "$@"

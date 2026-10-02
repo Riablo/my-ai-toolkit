@@ -1,0 +1,54 @@
+# config-sync 配置模板：所有示例均已注释，默认不会同步或连接任何主机。
+# config-sync init 创建此文件；默认位置为 ~/.config/config-sync/config.toml。
+# 支持 $XDG_CONFIG_HOME/config-sync/config.toml 或 init --config 自定义路径。
+# 使用时同时取消所需 [表头] 和配置项的注释，再修改主机名 / 路径。
+# 修改后先执行 config-sync list 和 config-sync --dry-run 检查。
+
+# ── 主机：名称默认也是 SSH 别名 ──
+# home 表示通过 ssh home 访问；端口、密钥等放在 ~/.ssh/config。
+# 可选 ssh 字段用来指定实际 SSH 地址，省略时直接使用主机名称。
+# [hosts.home]
+# ssh = "home"
+
+# ── 文件：键仅用于标注和日志，不需要在命令中输入 ──
+# [hosts.home.files]
+
+# 一个字符串：两端同路径，~ 分别在本机和目标主机上展开。
+# 取消下面一行及 [hosts.home.files] 的注释后，运行 config-sync 即可同步。
+# htask = "~/.config/htask/config.toml"
+
+# 两个字符串：固定为 [本机路径, 目标路径]。
+# 文件目标必须是完整文件名，不是父目录；允许两端文件名不同。
+# zsh = ["~/.zshrc", "~/.config/zsh/.zshrc"]
+
+# ── 目录：与 files 分开声明，不会额外嵌套一层同名目录 ──
+# [hosts.home.dirs]
+
+# 两端同路径；末尾有没有 / 都一样。
+# nvim = "~/.config/nvim/"
+
+# 两端不同路径；两条路径都代表目录本身。
+# scripts = ["~/scripts", "~/bin/scripts"]
+
+# ── 多台主机：各自配置接收哪些同步项，可使用不同路径 ──
+# office 是命令 / 补全中使用的名称，实际连接 user@workstation。
+# [hosts.office]
+# ssh = "user@workstation"
+
+# [hosts.office.files]
+# 也可以使用绝对路径。
+# htask = ["~/.config/htask/config.toml", "/srv/config/htask.toml"]
+
+# [hosts.office.dirs]
+# nvim = "~/.config/nvim"
+
+# ── 使用与边界 ──
+# config-sync                       同步所有主机上配置的全部文件和目录。
+# config-sync -H home               同步 home 上配置的全部内容；-H 可重复。
+# config-sync clean                 清理当前配置涉及的所有目标的专用备份。
+# config-sync clean -H home         只清理 home 的备份，不改当前目标内容。
+# 覆盖前备份整个已有文件 / 目录；目录是完整镜像，目标多余内容会被删除。
+# 备份位于目标同级的 .<目标名>.config-sync-backups/；clean 不再确认。
+# 同一主机的 files / dirs 标签不能重名；标签只用于标注和日志。
+# 路径只能用绝对路径或 ~/ 开头，不展开环境变量，不允许根目录 / 家目录。
+# 同一 SSH 地址上的目标路径不能重复或嵌套；始终单向推送，不做反向同步。
