@@ -65,7 +65,7 @@ Skills 用于承载可复用的工作流和任务约定。简单 CLI 直接查�
 | [cloudsaver-cli](cli/cloudsaver-cli/) | 网盘资源搜索与 115 转存工具（Telegram 搜索 / 115 转存） |
 | [config-sync](cli/config-sync/) | 一条命令按 TOML 单向推送全部配置文件 / 目录到多台 SSH 主机，覆盖前备份，支持主机筛选、清理、预览和动态补全 |
 | [freecurrency-cli](cli/freecurrency-cli/) | Open Exchange Rates 汇率工具（金额换算 / 最新汇率 / 本地缓存） |
-| [htask](cli/htask/) | 创建 Herdr worktree 与 Pi/Codex 任务，支持 PingCode bug、Label 初始化/并行开发服务和带 Label 的 PR/MR 交付 |
+| [htask](cli/htask/) | 创建 Herdr worktree 与 Pi/Codex/Claude Code 任务，支持 PingCode bug、Label 初始化/并行开发服务和带 Label 的 PR/MR 交付 |
 | [myskills](cli/myskills/) | 管理 AI Skills 的链接、安装与卸载（list / link / install / unlink / uninstall / status） |
 | [pano-json](cli/pano-json/) | 下载 720 云作品源码中 `window.json` 指向的原始 JSON |
 | [pingcode-cli](cli/pingcode-cli/) | 使用 PingCode 官方 API 查询与更新 bugs、查看评论及诊断配置 |

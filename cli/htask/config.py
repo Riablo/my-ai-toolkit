@@ -7,8 +7,10 @@ import sys
 import tomllib
 from pathlib import Path
 
-AGENTS = ("pi", "codex")
+AGENTS = ("pi", "codex", "claude")
 LEVELS = {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+# claude --effort 不接受 off / minimal。
+CLAUDE_LEVELS = LEVELS - {"off", "minimal"}
 ALIAS = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
 
 
@@ -94,7 +96,7 @@ def load(path: Path, *, project: bool = False) -> dict:
             for key, value in spec.items():
                 if not isinstance(value, str) or not value.strip() or value != value.strip():
                     fail(path, f"{agent}.{alias}.{key} 必须是非空字符串且无首尾空格")
-                if key == "thinking" and value not in LEVELS:
+                if key == "thinking" and value not in (CLAUDE_LEVELS if agent == "claude" else LEVELS):
                     fail(path, f"{agent}.{alias}.thinking 无效：{value}")
     return data
 

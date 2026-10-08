@@ -34,12 +34,16 @@ prompt = "主要是做智能体编辑器 apps/c2v-editor"
 labels = ["c2v"]
 
 # 模型预设可写在全局或项目配置；项目按 agent/名称/字段覆盖全局。
-# Pi model 使用 provider/model；Codex 使用原生模型 ID。
+# Pi model 使用 provider/model；Codex 使用原生模型 ID；
+# Claude 使用别名（如 opus、sonnet）或完整模型名，thinking 对应 --effort（low~max）。
 # [models.pi."my-preset"]
 # model = "your-provider/your-model"
 # thinking = "high"
 # [models.codex."my-preset"]
 # model = "your-model"
+# thinking = "high"
+# [models.claude."my-preset"]
+# model = "opus"
 # thinking = "high"
 
 # 不涉及 Label 的项目：删除所有 labels/iterations 表，只保留需要的 init/dev/models。

@@ -1,6 +1,6 @@
 # htask
 
-通过 Herdr 创建 worktree，启动 Pi / Codex 并发送任务；可在 Herdr 终端或外部 shell / 脚本中调用，无需 `HERDR_ENV`。外部调用需要 Herdr 服务已运行、CLI 能连接到目标会话；多个会话时先确认当前 `herdr` 命令连接的是目标会话（`htask` 暂无 `--session` 选项），并显式指定 `--repo`。依赖 Bash 5+、Python 3.11+（标准库 `tomllib`）、`git`、`jq`、`openssl`、`herdr`；`--bug` 还需已配置的 `pingcode-cli`，`--mode submit` 需要 `gh` 或 `glab`。安装：从本仓库根目录执行 `bash scripts/install.sh`。
+通过 Herdr 创建 worktree，启动 Pi / Codex / Claude Code 并发送任务；可在 Herdr 终端或外部 shell / 脚本中调用，无需 `HERDR_ENV`。外部调用需要 Herdr 服务已运行、CLI 能连接到目标会话；多个会话时先确认当前 `herdr` 命令连接的是目标会话（`htask` 暂无 `--session` 选项），并显式指定 `--repo`。依赖 Bash 5+、Python 3.11+（标准库 `tomllib`）、`git`、`jq`、`openssl`、`herdr`；`--bug` 还需已配置的 `pingcode-cli`，`--mode submit` 需要 `gh` 或 `glab`。安装：从本仓库根目录执行 `bash scripts/install.sh`。
 
 ```bash
 htask                                            # 逐项询问，配置了预设时用列表选模型
@@ -13,7 +13,7 @@ htask --base v6.1.0 --branch fix-title --bug 720YUN-11374 \
 ```
 
 - `--repo` 默认当前 Git 仓库；`--base` 默认当前检出的分支名。输入 `v6.1.0` 会先向 `origin` 查询并**刷新该远端分支**，再从 `origin/v6.1.0` 创建 worktree；远端没有时才使用同名本地分支；都没有则报错。也支持 `--base origin/v6.1.0` 强制要求远端。查询或刷新远端**失败**时会报错，不回退本地旧分支；不会切换或合并源工作目录的分支。只有明确的分支名可用，不能使用提交哈希、tag 或单独的 `origin`。
-- `--branch` 必填；`--bug`、`--prompt` 至少提供一个。命令行缺少必填项时进入交互；无 TTY 的脚本须一次传齐必填参数。`--agent` 默认 `pi`；`--model` 是针对所选 agent 的**预设名**，不是原生模型 ID。省略它就不传模型及思考强度参数，使用 Pi / Codex 自身配置。交互模式下，有预设才出现列表，回车选自身默认；未配置预设则不询问。显式传入不存在的预设会报错；不再支持 `--thinking`。Codex 无论是否选模型预设，启动时都传入 `--dangerously-bypass-approvals-and-sandbox`：**跳过审批并关闭沙箱**；Pi 不受影响。只在认可此权限范围、具备外部隔离的环境中使用。
+- `--branch` 必填；`--bug`、`--prompt` 至少提供一个。命令行缺少必填项时进入交互；无 TTY 的脚本须一次传齐必填参数。`--agent` 默认 `pi`；`--model` 是针对所选 agent 的**预设名**，不是原生模型 ID。省略它就不传模型及思考强度参数，使用 Pi / Codex / Claude Code 自身配置。交互模式下，有预设才出现列表，回车选自身默认；未配置预设则不询问。显式传入不存在的预设会报错；不再支持 `--thinking`。Codex 无论是否选模型预设，启动时都传入 `--dangerously-bypass-approvals-and-sandbox`：**跳过审批并关闭沙箱**；`--agent claude` 启动 Claude Code，预设转换为 `claude --model <model> --effort <thinking>`，同样无论是否选预设都传入 `--dangerously-skip-permissions`：**跳过全部权限确认**；Pi 不受影响。只在认可此权限范围、具备外部隔离的环境中使用。
 - `--bug` 把编号放在新分支名前并用 `/` 分隔：`--bug 720YUN-11380 --branch foo-bar` 创建 `720YUN-11380/foo-bar`。通过 `pingcode-cli bug <编号>` 获取标题、描述、评论和图片；`--prompt` 作为优先于工单内容的用户要求。正文疑似凭据尽力过滤，但**工单及首个图片的完整 URL（含查询参数）会原样传给 agent**；敏感工单请先审查。查询失败时不会建树。只有 worktree、agent 和提示词都成功创建/发送后，才调用 `pingcode-cli set-state <编号> --state 处理中`；不传 `--bug` 不更新状态，与 `--mode` 无关。如果状态更新失败，任务**已经启动**，CLI 返回非零并提示检查工单状态；必要时只手动重试 `set-state`，不要重跑 `htask`。
 - `--mode submit` 根据网络 `origin` 的主机名自动识别 GitHub/GitLab，无法识别的平台（包括主机名不含 github/gitlab 的自托管实例）会在建树前报错。目标分支必须已在远端；本地路径 / `file://` 不可用于此模式。CLI 只要求 agent 测试、提交、推送、用 `gh pr create` 或 `glab mr create` 发 PR/MR，**不保证交付已经完成**；使用此模式即授权 agent 做远端发布。
 - 建树后如果项目 tab、agent 或提示词提交失败，worktree 会保留；命令可能已送达，先查 pane 再手工恢复，不盲目重试。
@@ -88,13 +88,17 @@ thinking = "xhigh"
 [models.codex."sol/xhigh"]
 model = "gpt-6-sol"
 thinking = "xhigh"
+
+[models.claude."opus/xhigh"]
+model = "opus"
+thinking = "xhigh"
 ```
 
 `labels.<名称>.init/dev` 均可省略或为空数组；例如 `[labels.documentation]` 空表只声明分类 Label。不涉及 Label 的项目只保留顶层 init/dev/models 即可。
 
 `iterations.<分支>.prompt/labels` 均可省略；prompt 若提供必须非空。只按起点分支名**完全匹配**（`--base origin/v6.1.0` 也匹配 `v6.1.0`），不匹配则没有迭代默认 Label。背景放在工单和用户要求之前，仅供定位，具体工单与用户要求优先。
 
-预设的 `model` 是 Pi 的 `provider/model` 或 Codex 的原生模型 ID；`thinking` 可省略（沿用工具本身配置）。新预设需有 `model`，覆盖全局既有预设时可以只写 `thinking`。
+预设的 `model` 是 Pi 的 `provider/model`、Codex 的原生模型 ID，或 Claude Code 的模型别名（`opus`、`sonnet` 等）/ 完整模型名；`thinking` 可省略（沿用工具本身配置）。Claude 的 `thinking` 对应 `--effort`，只接受 `low`/`medium`/`high`/`xhigh`/`max`。新预设需有 `model`，覆盖全局既有预设时可以只写 `thinking`。
 
 在命令 tab 中，`SOURCE_DIR` 指源仓库根目录，`WORKTREE_DIR` 指新 worktree 根目录；初始 cwd 是新 worktree。命令数组是可信 Bash 脚本，组内失败即停止后续命令；审查配置后再运行。各 Dev tab 是独立进程，不共享彼此或 init 脚本临时修改的 cwd / shell 变量；需要的环境应在服务自己的命令中配置或从文件读取。配置无效时在建树**之前**报错。
 

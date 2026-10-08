@@ -130,6 +130,11 @@ thinking = "max"
 [models.codex."luna/max"]
 model = "gpt-6-luna"
 thinking = "max"
+[models.claude."opus/xhigh"]
+model = "opus"
+thinking = "xhigh"
+[models.claude."sonnet"]
+model = "sonnet"
 TOML
 reset_logs
 run --branch explicit --model sol/xhigh --prompt '你好'
@@ -138,6 +143,19 @@ jq -se '.[1][3:] == ["--kind","pi","--pane","w9:p8","--","--provider","openai-co
 reset_logs
 run --branch codex --agent codex --model luna/max --prompt '你好'
 jq -se '.[1][3:] == ["--kind","codex","--pane","w9:p8","--","-m","gpt-6-luna","-c","model_reasoning_effort=\"max\"","--dangerously-bypass-approvals-and-sandbox"]' "$HTASK_TEST_LOG" >/dev/null
+# Claude Code：预设转为 --model/--effort；无论是否选预设都跳过权限确认。
+reset_logs
+run --branch claude-default --agent claude --prompt '你好'
+jq -se '.[1][3:] == ["--kind","claude","--pane","w9:p8","--","--dangerously-skip-permissions"]' "$HTASK_TEST_LOG" >/dev/null
+reset_logs
+run --branch claude --agent claude --model opus/xhigh --prompt '你好'
+jq -se '.[1][3:] == ["--kind","claude","--pane","w9:p8","--","--model","opus","--effort","xhigh","--dangerously-skip-permissions"]' "$HTASK_TEST_LOG" >/dev/null
+reset_logs
+run --branch claude-no-effort --agent claude --model sonnet --prompt '你好'
+jq -se '.[1][3:] == ["--kind","claude","--pane","w9:p8","--","--model","sonnet","--dangerously-skip-permissions"]' "$HTASK_TEST_LOG" >/dev/null
+reset_logs
+assert_failure --branch claude-alias --agent claude --model luna/max --prompt 'hi'
+grep -q 'claude 没有模型预设' "$tmp/err"
 # 交互只列出所选 agent 的预设，选择序号后转换为原生参数。
 reset_logs
 python3 - "$cli" "$repo" <<'PY'
@@ -758,6 +776,10 @@ reset_logs
 assert_failure --branch incomplete-model --prompt 'hi'
 grep -q '缺少 model' "$tmp/err"
 rm "$repo/.config/htask/config.toml"
+printf 'schema_version = 2\n[models.claude."bad"]\nmodel = "opus"\nthinking = "minimal"\n' > "$XDG_CONFIG_HOME/htask/config.toml"
+reset_logs
+assert_failure --branch claude-bad-effort --agent claude --prompt 'hi'
+grep -q 'claude.bad.thinking 无效' "$tmp/err"
 printf 'schema_version = [broken\n' > "$XDG_CONFIG_HOME/htask/config.toml"
 reset_logs
 assert_failure --branch invalid-global --prompt 'hi'

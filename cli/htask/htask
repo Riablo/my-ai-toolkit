@@ -3,11 +3,11 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-htask - 在 Herdr 中创建 worktree 并启动 Pi 或 Codex 任务
+htask - 在 Herdr 中创建 worktree 并启动 Pi、Codex 或 Claude Code 任务
 
 用法:
   htask [--repo 路径] [--base 分支名] --branch 分支 [--bug 编号]
-        [--agent pi|codex] [--model 预设名]
+        [--agent pi|codex|claude] [--model 预设名]
         [--mode dev|submit] [--label 名称 ... | --no-labels] [--prompt 提示词]
   htask                         交互式填写参数
 
@@ -24,6 +24,7 @@ htask - 在 Herdr 中创建 worktree 并启动 Pi 或 Codex 任务
 TOML 配置（可选）：~/.config/htask/config.toml 与 <仓库根目录>/.config/htask/config.toml；
 项目配置覆盖全局配置。预设通过 --model <名称> 选取，例如 sol/xhigh。
 --agent codex 始终传 --dangerously-bypass-approvals-and-sandbox，关闭审批和沙箱；仅在可信环境使用。
+--agent claude 的预设转换为 claude --model/--effort；始终传 --dangerously-skip-permissions，跳过全部权限确认；仅在可信环境使用。
 配置版本为 schema_version = 2；示例见 cli/htask/config.example.toml。
 项目专属 [labels.<名称>] 可配置 init/dev；[iterations.<起点分支>] 可配置 prompt/labels。
 --label 可重复，显式选择替换迭代默认；--no-labels 明确不选，两者互斥。
@@ -164,10 +165,10 @@ if [ "$interactive" -eq 1 ]; then
   if [ "$bug_set" -eq 0 ]; then ask 'PingCode bug 编号 --bug' ''; bug="$REPLY"; fi
   while [ -z "$branch" ]; do ask '新分支名 --branch' '' 1; branch="$REPLY"; done
   if [ "$agent_set" -eq 0 ]; then
-    ask 'Agent --agent (pi/codex)' 'pi'
+    ask 'Agent --agent (pi/codex/claude)' 'pi'
     agent="$REPLY"
   fi
-  case "$agent" in pi|codex) ;; *) die '--agent 仅支持 pi 或 codex' ;; esac
+  case "$agent" in pi|codex|claude) ;; *) die '--agent 仅支持 pi、codex 或 claude' ;; esac
   if [ "$model_set" -eq 0 ]; then
     readarray -t preset_names < <(jq -r --arg agent "$agent" '.models[$agent] | keys_unsorted[]' <<< "$config_json")
     if [ "${#preset_names[@]}" -gt 0 ]; then
@@ -229,7 +230,7 @@ fi
 [ -n "$branch" ] || die '--branch 不能为空'
 [ -n "$bug" ] || [ -n "$prompt" ] || die '--prompt 和 --bug 至少需要一个'
 agent="${agent:-pi}"
-case "$agent" in pi|codex) ;; *) die '--agent 仅支持 pi 或 codex' ;; esac
+case "$agent" in pi|codex|claude) ;; *) die '--agent 仅支持 pi、codex 或 claude' ;; esac
 case "$mode" in ''|dev|submit) ;; *) die '--mode 仅支持 dev 或 submit' ;; esac
 selected_labels_json="$(jq -cn --args '$ARGS.positional | reduce .[] as $name ([]; if index($name) == null then . + [$name] else . end)' -- "${labels[@]}")"
 readarray -d '' -t labels < <(jq -j '.[] | . + "\u0000"' <<< "$selected_labels_json")
@@ -453,6 +454,10 @@ if [ "$agent" = pi ]; then
     agent_args+=(--provider "${native_model%%/*}" --model "${native_model#*/}")
   fi
   if [ -n "$thinking" ]; then agent_args+=(--thinking "$thinking"); fi
+elif [ "$agent" = claude ]; then
+  if [ -n "$native_model" ]; then agent_args+=(--model "$native_model"); fi
+  if [ -n "$thinking" ]; then agent_args+=(--effort "$thinking"); fi
+  agent_args+=(--dangerously-skip-permissions)
 else
   if [ -n "$native_model" ]; then agent_args+=(-m "$native_model"); fi
   if [ -n "$thinking" ]; then agent_args+=(-c "model_reasoning_effort=\"${thinking}\""); fi

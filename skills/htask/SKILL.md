@@ -1,12 +1,12 @@
 ---
 name: htask
-description: 用户要创建 Herdr worktree 任务时，用 htask 启动 Pi/Codex 并核对任务结果。
+description: 用户要创建 Herdr worktree 任务时，用 htask 启动 Pi/Codex/Claude Code 并核对任务结果。
 disable-model-invocation: true
 ---
 
 # Htask
 
-用户明确要求新建任务时，用 `htask` 创建 Herdr worktree、启动 Pi/Codex 并发送任务提示词；仅询问用法或查看已有任务时不创建。
+用户明确要求新建任务时，用 `htask` 创建 Herdr worktree、启动 Pi/Codex/Claude Code 并发送任务提示词；仅询问用法或查看已有任务时不创建。
 
 1. **先看帮助。** 用 `command -v htask` 从 `PATH` 定位命令，运行 `htask -h` 获取当前参数和默认行为；未安装就先协助安装，不假设 CLI 与本 skill 同目录。确认源仓库、起点分支和目标 Herdr 会话，不明确时询问。代理或脚本非交互调用时一次传齐必需参数；需要交互填写就让用户在自己的终端运行。
 2. **守住授权边界。** 只有用户明确授权提交、推送和发 PR/MR 才选择 `--mode submit`。敏感工单先审查：`--bug` 会把工单和图片的完整 URL（可能含访问参数）发送给 agent。配置或认证无效时按报错协助修复，账号、路径和凭据由用户提供或同意。项目迭代背景只是定位线索，具体任务优先。
