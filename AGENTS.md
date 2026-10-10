@@ -55,8 +55,6 @@ scripts/install.sh               # 安装脚本，软链 CLI 工具 + zsh 补全
 | wt-land | `bash cli/wt-land/test_wt_land.bash` |
 | testpage-cli | `bash cli/testpage-cli/test_testpage_cli.bash` |
 | config-sync | `python3 cli/config-sync/test_config_sync.py` |
-| pingcode-cli | `bash cli/pingcode-cli/test_pingcode_cli.bash`、`bash cli/pingcode-cli/test_pingcode_performance.bash` |
-| jenkins-builder-cli | `uv run cli/jenkins-builder-cli/test_main.py` |
 | readlater-cli | `python3 cli/readlater-cli/test_main.py` |
 | cloudsaver-cli | `npm --prefix cli/cloudsaver-cli test` |
 | cos-cli | `uv run --with cos-python-sdk-v5==1.9.44 python -m unittest discover -s cli/cos-cli -p 'test_*.py' -v` |
