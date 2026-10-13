@@ -72,6 +72,37 @@ test ! -e "$tmp_dir/repo/source/old.js"
 test -e "$tmp_dir/repo/source/new.js"
 ! git --git-dir="$tmp_dir/remote.git" cat-file -e main:source/old.js 2>/dev/null
 test "$(git --git-dir="$tmp_dir/remote.git" show main:source/index.html)" = new
+
+# A single HTML file is published as a file, without a wrapping directory.
+printf 'page\n' >"$tmp_dir/page.html"
+printf 'asset\n' >"$tmp_dir/asset.js"
+url="$(HOME="$tmp_dir/home" "$script_dir/testpage-cli" push "$tmp_dir/page.html" | tail -n 1)"
+test "$url" = "https://example.com/page.html"
+test "$(git --git-dir="$tmp_dir/remote.git" show main:page.html)" = page
+! git --git-dir="$tmp_dir/remote.git" cat-file -e main:asset.js 2>/dev/null
+file_head="$(git -C "$tmp_dir/repo" rev-parse HEAD)"
+HOME="$tmp_dir/home" "$script_dir/testpage-cli" push "$tmp_dir/page.html" >/dev/null
+test "$(git -C "$tmp_dir/repo" rev-parse HEAD)" = "$file_head"
+printf 'page2\n' >"$tmp_dir/page.html"
+url="$(HOME="$tmp_dir/home" "$script_dir/testpage-cli" push "$tmp_dir/page.html" --subdir sub --name demo | tail -n 1)"
+test "$url" = "https://example.com/sub/demo.html"
+test "$(git --git-dir="$tmp_dir/remote.git" show main:sub/demo.html)" = page2
+test "$(git --git-dir="$tmp_dir/remote.git" show main:page.html)" = page
+# Non-HTML files and targets that are existing directories are refused.
+if HOME="$tmp_dir/home" "$script_dir/testpage-cli" push "$tmp_dir/asset.js" >/dev/null 2>&1; then
+  printf 'expected non-html file to be rejected\n' >&2; exit 1
+fi
+if HOME="$tmp_dir/home" "$script_dir/testpage-cli" push "$tmp_dir/page.html" --name source.html --subdir source/.. >/dev/null 2>&1; then
+  printf 'expected invalid subdir to be rejected\n' >&2; exit 1
+fi
+mkdir "$tmp_dir/source/nested.html"
+printf 'nested\n' >"$tmp_dir/source/nested.html/index.html"
+HOME="$tmp_dir/home" "$script_dir/testpage-cli" push "$tmp_dir/source" >/dev/null
+if HOME="$tmp_dir/home" "$script_dir/testpage-cli" push "$tmp_dir/page.html" --subdir source --name nested.html >/dev/null 2>&1; then
+  printf 'expected existing directory target to be rejected\n' >&2; exit 1
+fi
+test -d "$tmp_dir/repo/source/nested.html"
+test -z "$(git -C "$tmp_dir/repo" status --porcelain)"
 # The one remaining pull still refuses divergent branches before deployment.
 git -C "$tmp_dir/repo" commit -q --allow-empty -m local-only
 git clone -q -b main "$tmp_dir/remote.git" "$tmp_dir/other"
@@ -86,4 +117,4 @@ if HOME="$tmp_dir/home" "$script_dir/testpage-cli" push "$tmp_dir/source" > /dev
 fi
 test "$(wc -l < "$tmp_dir/copies.log")" -eq "$copies_before"
 test "$(cat "$tmp_dir/repo/source/index.html")" = new
-echo "ok: 无变化不复制、内容比较、完整覆盖和 ff-only 均通过"
+echo "ok: 无变化不复制、内容比较、完整覆盖、单文件发布和 ff-only 均通过"

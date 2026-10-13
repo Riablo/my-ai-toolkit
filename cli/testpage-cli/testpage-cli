@@ -60,11 +60,22 @@ canonicalize_dir() {
 
 canonicalize_source_dir() {
   local raw="$1"
-  [ -d "$raw" ] || die "源目录不存在：$raw"
+  [ -d "$raw" ] || die "源路径不存在：$raw"
   (
     cd "$raw"
     pwd -P
   )
+}
+
+canonicalize_source_file() {
+  local raw="$1"
+  local dir
+  case "${raw,,}" in
+    *.html|*.htm) ;;
+    *) die "源文件不是 .html 或 .htm 文件：$raw" ;;
+  esac
+  dir="$(cd "$(dirname "$raw")" && pwd -P)"
+  printf '%s/%s' "$dir" "$(basename "$raw")"
 }
 
 normalize_base_url() {
@@ -339,6 +350,32 @@ deploy_directory() {
   trap - EXIT
 }
 
+file_matches_target() {
+  local source_file="$1" target_file="$2"
+  [ -f "$target_file" ] && [ ! -L "$target_file" ] && cmp -s "$source_file" "$target_file"
+}
+
+deploy_file() {
+  local source_file="$1"
+  local target_file="$2"
+
+  local target_parent target_name staging_file
+  target_parent="$(dirname "$target_file")"
+  target_name="$(basename "$target_file")"
+  mkdir -p "$target_parent"
+  staging_file="$(mktemp "${target_parent}/.${target_name}.tmp.XXXXXX")"
+
+  cleanup_staging() {
+    [ -n "${staging_file:-}" ] && [ -f "$staging_file" ] && rm -f "$staging_file"
+  }
+  trap cleanup_staging EXIT
+
+  cp "$source_file" "$staging_file"
+  chmod 644 "$staging_file"
+  mv -f "$staging_file" "$target_file"
+  trap - EXIT
+}
+
 print_main_help() {
   cat <<EOF
   testpage-cli - 测试 HTML 页面快速发布工具
@@ -348,13 +385,13 @@ print_main_help() {
   testpage-cli config show
   testpage-cli config path
   testpage-cli config check
-  testpage-cli push [<source-dir>] [--subdir <相对路径> | --root] [--name <目录名>]
+  testpage-cli push [<source>] [--subdir <相对路径> | --root] [--name <名称>]
 
 说明：
   - 配置一个本地 Git 项目目录，例如 /Users/cz/Work/html_test/
   - 可配置 default_subdir，默认发布到某个子目录下
-  - 将包含 HTML 的目录完整覆盖到目标位置
-  - 不提供 source-dir 时，会交互输入目录并支持 Tab 路径补全
+  - 将包含 HTML 的目录完整覆盖到目标位置，或发布单个 HTML 文件
+  - 不提供 source 时，会交互输入路径并支持 Tab 路径补全
   - 先执行 git pull --ff-only，再按需复制、commit、push
   - 任一步 Git 失败即停止
 
@@ -362,6 +399,7 @@ print_main_help() {
   testpage-cli init --project-root /Users/cz/Work/html_test
   testpage-cli init --project-root /Users/cz/Work/html_test --default-subdir chenzheng
   testpage-cli push ./dist
+  testpage-cli push ./report.html
   testpage-cli push ./dist --name T2Vision-demo
   testpage-cli push ./dist --subdir chenzheng --name why-html-over-markdown
   testpage-cli push ./dist --root --name T2Vision-demo
@@ -398,19 +436,21 @@ EOF
 print_push_help() {
   cat <<EOF
 用法：
-  testpage-cli push [<source-dir>] [--subdir <相对路径> | --root] [--name <目录名>]
+  testpage-cli push [<source>] [--subdir <相对路径> | --root] [--name <名称>]
 
 说明：
-  - source-dir 必须是目录，且里面至少包含一个 .html 或 .htm 文件
-  - 不提供 source-dir 时，会交互输入目录并支持 Tab 路径补全
-  - 若未提供 --name，默认使用源目录名作为目标目录名
+  - source 可以是目录（里面至少包含一个 .html 或 .htm 文件），也可以是单个 .html 或 .htm 文件
+  - 不提供 source 时，会交互输入路径并支持 Tab 路径补全
+  - 若未提供 --name，默认使用源目录名或源文件名
+  - 发布单个文件时，--name 是目标文件名；没有 .html 或 .htm 后缀时自动补上源文件的后缀
   - 若未提供 --subdir 或 --root，会优先使用配置中的 default_subdir
   - 路径优先级：--root > --subdir > default_subdir > 根目录
   - --root 和 --subdir 互斥
-  - 发布流程包含 git pull --ff-only、按需完整覆盖目录、commit、push
+  - 发布流程包含 git pull --ff-only、按需完整覆盖目录或文件、commit、push
 
 示例：
   testpage-cli push ./dist
+  testpage-cli push ./report.html
   testpage-cli push ./dist --name T2Vision-demo
   testpage-cli push ./dist --subdir chenzheng --name why-html-over-markdown
   testpage-cli push ./dist --root --name T2Vision-demo
@@ -505,9 +545,9 @@ cmd_config() {
 cmd_push() {
   local source_arg
   if [ $# -eq 0 ]; then
-    read -e -r -p "请输入源目录（可按 Tab 补全）：" source_arg || die "已取消输入"
+    read -e -r -p "请输入源目录或 HTML 文件（可按 Tab 补全）：" source_arg || die "已取消输入"
     source_arg="$(trim "$source_arg")"
-    [ -n "$source_arg" ] || die "源目录不能为空"
+    [ -n "$source_arg" ] || die "源路径不能为空"
   elif [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
     print_push_help
     return 0
@@ -550,24 +590,41 @@ cmd_push() {
 
   load_config
 
-  local source_dir
-  source_dir="$(canonicalize_source_dir "$source_arg")"
-  ensure_has_html "$source_dir"
+  local source_path
+  local source_is_file=0
+  local url_suffix="/"
+  if [ -f "$source_arg" ]; then
+    source_is_file=1
+    url_suffix=""
+    source_path="$(canonicalize_source_file "$source_arg")"
+  else
+    source_path="$(canonicalize_source_dir "$source_arg")"
+    ensure_has_html "$source_path"
+  fi
 
   if [ "$use_root" -eq 0 ] && [ -z "$subdir" ] && [ -n "$CONFIG_DEFAULT_SUBDIR" ]; then
     subdir="$CONFIG_DEFAULT_SUBDIR"
   fi
 
   if [ -z "$name" ]; then
-    name="$(basename "$source_dir")"
+    name="$(basename "$source_path")"
+  elif [ "$source_is_file" -eq 1 ]; then
+    case "${name,,}" in
+      *.html|*.htm) ;;
+      *) name="${name}.${source_path##*.}" ;;
+    esac
   fi
 
   local target_rel
   target_rel="$(build_target_rel "$subdir" "$name")"
 
-  local target_dir
-  target_dir="${CONFIG_PROJECT_ROOT}/${target_rel}"
-  ensure_source_target_safe "$source_dir" "$target_dir"
+  local target_path
+  target_path="${CONFIG_PROJECT_ROOT}/${target_rel}"
+  if [ "$source_is_file" -eq 1 ]; then
+    [ ! "$source_path" -ef "$target_path" ] || die "源文件和目标文件是同一个文件：$target_path"
+  else
+    ensure_source_target_safe "$source_path" "$target_path"
+  fi
 
   ensure_clean_worktree "$CONFIG_PROJECT_ROOT"
 
@@ -577,16 +634,30 @@ cmd_push() {
   info "执行 git pull --ff-only origin ${branch}..."
   git -C "$CONFIG_PROJECT_ROOT" pull --ff-only origin "$branch"
 
-  if source_matches_target "$source_dir" "$target_dir"; then
+  local unchanged=0
+  if [ "$source_is_file" -eq 1 ]; then
+    [ ! -d "$target_path" ] || [ -L "$target_path" ] || die "目标位置已存在同名目录：$target_path"
+    if file_matches_target "$source_path" "$target_path"; then
+      unchanged=1
+    fi
+  elif source_matches_target "$source_path" "$target_path"; then
+    unchanged=1
+  fi
+
+  if [ "$unchanged" -eq 1 ]; then
     local encoded_rel
     encoded_rel="$(encode_url_path "$target_rel")"
     success "目标内容没有变化，无需提交。"
-    echo "${CONFIG_BASE_URL}${encoded_rel}/"
+    echo "${CONFIG_BASE_URL}${encoded_rel}${url_suffix}"
     return 0
   fi
 
   info "完整覆盖 ${target_rel} ..."
-  deploy_directory "$source_dir" "$target_dir"
+  if [ "$source_is_file" -eq 1 ]; then
+    deploy_file "$source_path" "$target_path"
+  else
+    deploy_directory "$source_path" "$target_path"
+  fi
 
   git -C "$CONFIG_PROJECT_ROOT" add --all -- "$target_rel"
 
@@ -594,7 +665,7 @@ cmd_push() {
     local encoded_rel
     encoded_rel="$(encode_url_path "$target_rel")"
     success "目标内容没有变化，无需提交。"
-    echo "${CONFIG_BASE_URL}${encoded_rel}/"
+    echo "${CONFIG_BASE_URL}${encoded_rel}${url_suffix}"
     return 0
   fi
 
@@ -610,7 +681,7 @@ cmd_push() {
   local encoded_rel
   encoded_rel="$(encode_url_path "$target_rel")"
   success "发布完成："
-  echo "${CONFIG_BASE_URL}${encoded_rel}/"
+  echo "${CONFIG_BASE_URL}${encoded_rel}${url_suffix}"
 }
 
 main() {

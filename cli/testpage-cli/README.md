@@ -2,10 +2,10 @@
 
 测试 HTML 页面快速发布工具。
 
-它会把一个包含 HTML 和静态资源的本地目录同步到配置好的 `html_test` Git 项目里，然后自动执行：
+它会把一个包含 HTML 和静态资源的本地目录，或单个 HTML 文件，同步到配置好的 `html_test` Git 项目里，然后自动执行：
 
 - `git pull --ff-only`（包含从 origin 拉取，只执行一次）
-- 覆盖目标目录
+- 覆盖目标目录或文件
 - `git add`
 - `git commit`
 - `git push`
@@ -79,7 +79,7 @@ default_subdir=chenzheng
 
 ## 用法
 
-直接运行 `push` 时会提示输入源目录；输入过程中可按 `Tab` 补全路径：
+直接运行 `push` 时会提示输入源目录或 HTML 文件；输入过程中可按 `Tab` 补全路径：
 
 ```bash
 testpage-cli push
@@ -95,6 +95,18 @@ testpage-cli push ./why-html-over-markdown
 
 ```text
 https://test.720yun.com/html_test/chenzheng/why-html-over-markdown/
+```
+
+发布单个 HTML 文件（文件直接放到目标位置，不会多包一层目录）：
+
+```bash
+testpage-cli push ./report.html
+```
+
+返回：
+
+```text
+https://test.720yun.com/html_test/chenzheng/report.html
 ```
 
 发布时重命名：
@@ -129,12 +141,14 @@ https://test.720yun.com/html_test/T2Vision-demo/
 
 ## 行为说明
 
-- `push` 只接受目录作为输入，目录里至少要有一个 `.html` 或 `.htm` 文件
+- `push` 接受目录或单个文件：目录里至少要有一个 `.html` 或 `.htm` 文件；单个文件必须以 `.html` 或 `.htm` 结尾
+- 发布单个文件时只复制这一个文件，不带同目录的其他资源；页面引用了本地资源时请发布整个目录
 - 正常发布时可以直接执行 `push`；如果想先排查配置，或 `push` 失败后要诊断，再运行 `testpage-cli config check`
 - `--subdir` 必须是相对路径，不能包含 `..`
 - `default_subdir` 和 `--subdir` 使用同样的路径规则
 - `--root` 和 `--subdir` 互斥；优先级为 `--root` > `--subdir` > `default_subdir` > 根目录
-- `--name` 是最终目录名，不能包含 `/`
+- `--name` 是最终目录名，不能包含 `/`；发布单个文件时是最终文件名，没有 `.html` 或 `.htm` 后缀时自动补上源文件的后缀
+- 发布单个文件时，内容相同则不重写；目标位置已有同名目录时会报错停止，不会覆盖
 - 目标目录已存在时，先分块比较文件内容、符号链接和权限；无变化时不会重写目标目录，时间戳变化本身不会触发复制
 - 有变化时，会先复制到隔离的临时目录，再整体删除旧目录并用新目录替换，避免旧资源残留
 - 发布前会检查 `project_root` 是否是 Git 仓库，且工作区必须是干净的

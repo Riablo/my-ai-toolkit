@@ -5,7 +5,7 @@ _testpage-cli() {
   commands=(
     'init:初始化测试项目目录配置'
     'config:查看配置或配置文件路径'
-    'push:发布 HTML 目录到测试服务器项目'
+    'push:发布 HTML 目录或单个 HTML 文件到测试服务器项目'
   )
   config_commands=(
     'show:显示当前配置'
@@ -38,8 +38,8 @@ _testpage-cli() {
       _arguments \
         '--subdir[发布到指定子目录]:subdir:' \
         '--root[忽略默认子目录，直接发布到根目录]' \
-        '--name[发布时使用的目标目录名]:name:' \
-        '2:source directory:_directories'
+        '--name[发布时使用的目标目录名或文件名]:name:' \
+        '2:source directory or html file:_files -g "*.(html|htm)(-.)"'
       ;;
   esac
 }
