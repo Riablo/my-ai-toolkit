@@ -53,6 +53,7 @@ scripts/install.sh               # 安装脚本，软链 CLI 工具 + zsh 补全
 | myskills / skill 分发 | `bash cli/myskills/test_myskills.bash` |
 | skill-auto / 调用策略 | `bash cli/skill-auto/test_skill_auto.bash` |
 | wt-land | `bash cli/wt-land/test_wt_land.bash` |
+| img | `bash cli/img/test_img.bash` |
 | testpage-cli | `bash cli/testpage-cli/test_testpage_cli.bash` |
 | config-sync | `python3 cli/config-sync/test_config_sync.py` |
 | readlater-cli | `python3 cli/readlater-cli/test_main.py` |

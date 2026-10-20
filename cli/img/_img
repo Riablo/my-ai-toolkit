@@ -1,0 +1,48 @@
+#compdef img
+
+_img() {
+  local -a commands common images
+  commands=(
+    'compress:视觉无损压缩，保持原格式'
+    'convert:转为 png / jpg / webp / avif 并压缩'
+    'resize:按宽、高或宽高改尺寸并压缩'
+  )
+  common=(
+    '(-o --out-dir)'{-o,--out-dir}'[输出目录]:目录:_files -/'
+    '(-f --force)'{-f,--force}'[覆盖已存在的输出文件]'
+    '(-h --help)'{-h,--help}'[显示帮助]'
+  )
+  images='*:图片:_files -g "*.(#i)(png|jpg|jpeg|webp|avif|heic|heif|gif|tif|tiff|bmp|jxl|svg|pdf|dng|raw|cr2|cr3|nef|arw)(-.)"'
+
+  if (( CURRENT == 2 )); then
+    if [[ "$PREFIX" == -* ]]; then
+      _arguments '(-h --help)'{-h,--help}'[显示帮助]'
+    else
+      _describe '命令' commands
+    fi
+    return
+  fi
+
+  local subcommand="${words[2]}"
+  shift words
+  (( CURRENT-- ))
+  case "$subcommand" in
+    compress)
+      _arguments $common \
+        '*:图片:_files -g "*.(#i)(png|jpg|jpeg|webp|avif)(-.)"'
+      ;;
+    convert)
+      _arguments $common \
+        '(-t --to)'{-t,--to}'[目标格式]:格式:(png jpg webp avif)' \
+        $images
+      ;;
+    resize)
+      _arguments $common \
+        '(-w --width)'{-w,--width}'[目标宽度]:像素:' \
+        '(-H --height)'{-H,--height}'[目标高度]:像素:' \
+        '*:图片:_files -g "*.(#i)(png|jpg|jpeg|webp|avif)(-.)"'
+      ;;
+  esac
+}
+
+_img "$@"

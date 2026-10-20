@@ -1,0 +1,441 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+# 视觉无损档位：按 SSIMULACRA2 约 80–88（几乎看不出差别）校准，调整前用样图对比。
+JPEG_QUALITY=85
+WEBP_QUALITY=90
+AVIF_QUALITY=75
+AVIF_SPEED=4
+PNG_QUALITY=80-100
+# pngquant 结果的 SSIMULACRA2 下限；照片、渐变量化后常低于此值，退回无损。
+PNG_MIN_SCORE=80
+# compress 至少要省下的百分比，否则不生成文件。
+MIN_SAVING=5
+# 只限定一边时，另一边传给 vips thumbnail 的上限。
+MAX_SIDE=10000000
+
+usage() {
+  cat <<'EOF'
+img - 图片压缩、格式转换与改尺寸（视觉无损）
+
+用法:
+  img <命令> [选项] <图片>...
+
+命令:
+  compress   视觉无损压缩，保持原格式
+  convert    转为 png / jpg / webp / avif，同时压缩
+  resize     按宽、高或宽高改尺寸，同时压缩
+
+选项:
+  -h, --help  显示帮助
+
+使用 img <命令> --help 查看各命令的选项和示例。
+
+说明:
+  compress 直接替换原图，原图移到废纸篓；convert / resize 输出到原图所在目录，不覆盖已有文件。
+  不支持动图，多帧图片只处理第一帧。
+  去掉 EXIF / XMP 等元数据，保留 ICC 色彩配置，EXIF 方向直接应用到像素上。
+
+依赖（Homebrew）:
+  brew install vips oxipng pngquant libavif jpeg-turbo jpeg-xl
+EOF
+}
+
+usage_compress() {
+  cat <<'EOF'
+img compress - 视觉无损压缩，保持原格式
+
+用法:
+  img compress [选项] <图片>...
+
+压缩结果直接替换原图，原图移到废纸篓，可在访达中放回原处。
+指定 -o 时以原文件名写到该目录，原图保留不动。
+只支持 png / jpg / webp / avif，其他格式先用 img convert 转换。
+省不到 5% 时视为已是最优，不做改动，避免对有损格式白白再损失一次画质。
+
+选项:
+  -o, --out-dir <目录>  输出到该目录而不替换原图；不存在时自动创建
+  -f, --force           配合 -o，覆盖目录中已存在的同名文件
+  -h, --help            显示帮助
+
+示例:
+  img compress photo.jpg shot.png    # 原地替换，原图进废纸篓
+  img compress -o out *.webp         # → out/*.webp，原图不动
+EOF
+}
+
+usage_convert() {
+  cat <<'EOF'
+img convert - 转为 png / jpg / webp / avif，同时压缩
+
+用法:
+  img convert -t <格式> [选项] <图片>...
+
+输入可以是任意常见图片格式（HEIC、TIFF、GIF、BMP、JPEG XL、SVG、PDF、相机 RAW 等）。
+透明区域转 jpg 时填充白色。
+
+选项:
+  -t, --to <格式>       目标格式：png、jpg（或 jpeg）、webp、avif
+  -o, --out-dir <目录>  输出目录，默认与原图相同；不存在时自动创建
+  -f, --force           覆盖已存在的输出文件（任何情况下都不会覆盖原图）
+  -h, --help            显示帮助
+
+示例:
+  img convert -t webp IMG_0001.heic  # → IMG_0001.webp
+  img convert -t avif -o out *.png   # → out/*.avif
+EOF
+}
+
+usage_resize() {
+  cat <<'EOF'
+img resize - 按宽、高或宽高改尺寸，同时压缩
+
+用法:
+  img resize (-w <宽> | -H <高> | -w <宽> -H <高>) [选项] <图片>...
+
+只给宽或高时等比缩放，同时给宽高时强制缩放到该尺寸。
+只支持 png / jpg / webp / avif，其他格式先用 img convert 转换。
+输出文件名带实际结果尺寸。
+
+选项:
+  -w, --width <像素>    目标宽度
+  -H, --height <像素>   目标高度
+  -o, --out-dir <目录>  输出目录，默认与原图相同；不存在时自动创建
+  -f, --force           覆盖已存在的输出文件（任何情况下都不会覆盖原图）
+  -h, --help            显示帮助
+
+示例:
+  img resize -w 1200 photo.jpg       # → photo.1200x900.jpg
+  img resize -H 600 photo.webp       # → photo.800x600.webp
+  img resize -w 800 -H 800 a.png     # → a.800x800.png
+EOF
+}
+
+die() {
+  printf '错误：%s\n' "$1" >&2
+  exit "${2:-1}"
+}
+
+usage_error() {
+  printf '错误：%s\n使用 img %s--help 查看帮助。\n' "$1" "${command:+$command }" >&2
+  exit 2
+}
+
+require_deps() {
+  local -A formula=(
+    [vips]=vips [vipsheader]=vips [pngquant]=pngquant [oxipng]=oxipng
+    [jpegtran]=jpeg-turbo [avifenc]=libavif [ssimulacra2]=jpeg-xl
+  )
+  local -A missing=()
+  local cmd
+  for cmd in "${!formula[@]}"; do
+    command -v "$cmd" >/dev/null 2>&1 || missing[${formula[$cmd]}]=1
+  done
+  [ "${#missing[@]}" -eq 0 ] || die "缺少依赖，请先安装：brew install ${!missing[*]}"
+}
+
+# 报告当前文件的错误；批量处理时继续下一个文件。
+fail() {
+  printf '错误：%s：%s\n' "$current" "$1" >&2
+  return 1
+}
+
+# 失败时把工具的报错一并输出，便于定位。
+run() {
+  "$@" 2>"$work/stderr" && return 0
+  fail "$1 失败：$(tr '\n' ' ' <"$work/stderr")"
+}
+
+file_size() {
+  stat -f %z "$1"
+}
+
+human_size() {
+  awk -v b="$1" 'BEGIN {
+    split("B K M G", u); i = 1
+    while (b >= 1024 && i < 4) { b /= 1024; i++ }
+    printf (i == 1 ? "%d%s" : "%.1f%s"), b, u[i]
+  }'
+}
+
+# 按内容识别格式：png / jpg / webp / avif，其他可读格式输出 other。
+detect_format() {
+  local loader
+  loader="$(vipsheader -f vips-loader "$1" 2>/dev/null)" || return 1
+  case "$loader" in
+    pngload*) echo png ;;
+    jpegload*) echo jpg ;;
+    webpload*) echo webp ;;
+    heifload*)
+      if [ "$(vipsheader -f heif-compression "$1" 2>/dev/null)" = av1 ]; then
+        echo avif
+      else
+        echo other
+      fi
+      ;;
+    *) echo other ;;
+  esac
+}
+
+# 源图是否为无损格式；是则 WebP 额外尝试无损编码，取较小者。
+is_lossless_source() {
+  case "$(vipsheader -f vips-loader "$1" 2>/dev/null)" in
+    pngload* | gifload* | tiffload* | ppmload* | magickload*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# 从候选文件中选最小的一个，输出其路径。
+smallest() {
+  local best="" f
+  for f in "$@"; do
+    [ -s "$f" ] || continue
+    if [ -z "$best" ] || [ "$(file_size "$f")" -lt "$(file_size "$best")" ]; then
+      best="$f"
+    fi
+  done
+  [ -n "$best" ] && printf '%s\n' "$best"
+}
+
+# encode <已解码的 .v> <格式> <是否尝试无损>：在 $work 中编码，输出结果路径。
+encode() {
+  local src="$1" fmt="$2" try_lossless="$3" status
+  case "$fmt" in
+    png)
+      run vips copy "$src" "$work/base.png[keep=icc,compression=1]" || return 1
+      pngquant --quality="$PNG_QUALITY" --speed 1 --skip-if-larger \
+        --output "$work/quant.png" -- "$work/base.png" 2>"$work/stderr"
+      status=$?
+      # 98：结果更大，99：达不到质量下限，两者都退回无损版本。
+      case "$status" in
+        0 | 98 | 99) ;;
+        *) fail "pngquant 失败：$(tr '\n' ' ' <"$work/stderr")"; return 1 ;;
+      esac
+      local result="$work/base.png" score
+      if [ "$status" = 0 ]; then
+        score="$(ssimulacra2 "$work/base.png" "$work/quant.png" 2>/dev/null)" &&
+          awk -v s="$score" -v min="$PNG_MIN_SCORE" 'BEGIN { exit !(s >= min) }' &&
+          result="$work/quant.png"
+      fi
+      run oxipng -q -o 4 --strip safe "$result" || return 1
+      echo "$result"
+      ;;
+    jpg)
+      run vips copy "$src" "$work/out.jpg[Q=$JPEG_QUALITY,optimize_coding,trellis_quant,overshoot_deringing,optimize_scans,quant_table=3,interlace,keep=icc,background=255]" || return 1
+      echo "$work/out.jpg"
+      ;;
+    webp)
+      run vips copy "$src" "$work/lossy.webp[Q=$WEBP_QUALITY,smart_subsample,effort=6,keep=icc]" || return 1
+      if [ "$try_lossless" = 1 ]; then
+        run vips copy "$src" "$work/lossless.webp[lossless,effort=6,keep=icc]" || return 1
+      fi
+      smallest "$work/lossy.webp" "$work/lossless.webp"
+      ;;
+    avif)
+      run vips copy "$src" "$work/avif-src.png[keep=icc,compression=1]" || return 1
+      run avifenc -q "$AVIF_QUALITY" -s "$AVIF_SPEED" -j all --ignore-exif --ignore-xmp \
+        "$work/avif-src.png" "$work/out.avif" >/dev/null || return 1
+      echo "$work/out.avif"
+      ;;
+  esac
+}
+
+# 原图本身的无损优化候选，供 compress 与重新编码的结果比较。
+lossless_candidate() {
+  local in="$1" fmt="$2" orientation
+  case "$fmt" in
+    jpg)
+      # jpegtran 不应用 EXIF 方向，带旋转的图只走重新编码。
+      orientation="$(vipsheader -f orientation "$in" 2>/dev/null || echo 1)"
+      [ "$orientation" = 1 ] || return 0
+      run jpegtran -copy icc -optimize -progressive -outfile "$work/lossless.jpg" "$in" || return 1
+      echo "$work/lossless.jpg"
+      ;;
+  esac
+}
+
+target_path() {
+  local in="$1" name="$2" dir
+  dir="${out_dir:-$(dirname -- "$in")}"
+  if [ "$dir" = . ]; then
+    printf '%s\n' "$name"
+  else
+    printf '%s\n' "${dir%/}/$name"
+  fi
+}
+
+# 计算输出路径并做覆盖检查；通过时输出路径。
+output_path() {
+  local in="$1" out
+  out="$(target_path "$in" "$2")"
+  [ ! "$out" -ef "$in" ] || { fail "输出会覆盖原图：$out"; return 1; }
+  [ ! -e "$out" ] || [ "$force" = 1 ] || { fail "$out 已存在，用 -f 覆盖"; return 1; }
+  printf '%s\n' "$out"
+}
+
+# 先把结果写到同目录临时文件，原图移入废纸篓后再改名，任一步失败都不丢原图。
+replace_original() {
+  local in="$1" result="$2" staged
+  staged="$(mktemp "$(dirname -- "$in")/.img.XXXXXX")" || { fail "无法写入原图所在目录"; return 1; }
+  if ! cp -- "$result" "$staged" || ! chmod "$(stat -f %Lp "$in")" "$staged"; then
+    rm -f -- "$staged"
+    fail "写入压缩结果失败"
+    return 1
+  fi
+  run trash "$in" || { rm -f -- "$staged"; return 1; }
+  mv -f -- "$staged" "$in" || { fail "原图已移到废纸篓，但替换失败，压缩结果在：$staged"; return 1; }
+}
+
+report() {
+  local label="$1" before="$2" after
+  after="$(file_size "$3")"
+  printf '%s  %s → %s (%+d%%)%s\n' "$label" "$(human_size "$before")" "$(human_size "$after")" \
+    "$(( (after - before) * 100 / before ))" "${4:-}"
+}
+
+process() {
+  local in="$1" fmt stem ext result out try_lossless=0
+  current="$in"
+  [ -f "$in" ] || { fail "文件不存在"; return 1; }
+  fmt="$(detect_format "$in")" || { fail "无法识别的图片"; return 1; }
+
+  local base
+  base="$(basename -- "$in")"
+  stem="${base%.*}"
+  ext="${base##*.}"
+  [ "$stem" != "$base" ] || ext="$fmt"
+
+  case "$command" in
+    compress | resize)
+      [ "$fmt" != other ] || { fail "$command 只支持 png / jpg / webp / avif，请先用 img convert 转换"; return 1; }
+      ;;
+  esac
+  [ "$fmt" = png ] && try_lossless=1
+  [ "$command" = convert ] && is_lossless_source "$in" && try_lossless=1
+
+  work="$tmp_root/$((++file_index))"
+  mkdir -p "$work"
+
+  case "$command" in
+    compress)
+      local in_place=0
+      out="$(target_path "$in" "$base")"
+      if [ "$out" -ef "$in" ]; then
+        in_place=1
+        command -v trash >/dev/null 2>&1 || { fail "缺少 trash 命令（macOS 15 及以上自带），无法替换原图"; return 1; }
+      else
+        out="$(output_path "$in" "$base")" || return 1
+      fi
+      run vips autorot "$in" "$work/src.v" || return 1
+      local encoded lossless
+      encoded="$(encode "$work/src.v" "$fmt" "$try_lossless")" || return 1
+      lossless="$(lossless_candidate "$in" "$fmt")" || return 1
+      result="$(smallest "$encoded" "$lossless")"
+      if [ "$(( $(file_size "$result") * 100 ))" -gt "$(( $(file_size "$in") * (100 - MIN_SAVING) ))" ]; then
+        printf '%s  已是最优，未改动\n' "$in"
+        return 0
+      fi
+      if [ "$in_place" = 1 ]; then
+        local before
+        before="$(file_size "$in")"
+        replace_original "$in" "$result" || return 1
+        report "$in" "$before" "$in" "，原图已移到废纸篓"
+        return 0
+      fi
+      ;;
+    convert)
+      [ "$fmt" != "$target" ] || { fail "已是 $target 格式，压缩请用 img compress"; return 1; }
+      out="$(output_path "$in" "$stem.$target")" || return 1
+      run vips autorot "$in" "$work/src.v" || return 1
+      result="$(encode "$work/src.v" "$target" "$try_lossless")" || return 1
+      ;;
+    resize)
+      local size_args=()
+      if [ -n "$width" ] && [ -n "$height" ]; then
+        size_args=("$width" --height "$height" --size force)
+      elif [ -n "$width" ]; then
+        size_args=("$width" --height "$MAX_SIDE")
+      else
+        size_args=("$MAX_SIDE" --height "$height")
+      fi
+      run vips thumbnail "$in" "$work/src.v" "${size_args[@]}" || return 1
+      local w h
+      w="$(vipsheader -f width "$work/src.v")"
+      h="$(vipsheader -f height "$work/src.v")"
+      out="$(output_path "$in" "$stem.${w}x${h}.$ext")" || return 1
+      result="$(encode "$work/src.v" "$fmt" "$try_lossless")" || return 1
+      ;;
+  esac
+
+  [ -n "$result" ] || return 1
+  mkdir -p -- "$(dirname -- "$out")" || return 1
+  cp -- "$result" "$out" || return 1
+  report "$in → $out" "$(file_size "$in")" "$out"
+}
+
+
+command=""
+case "${1:-}" in
+  compress | convert | resize) command="$1"; shift ;;
+  -h | --help) usage; exit 0 ;;
+  "") usage >&2; exit 2 ;;
+  *) usage_error "未知命令：$1" ;;
+esac
+
+target=""
+width=""
+height=""
+out_dir=""
+force=0
+files=()
+
+need_value() {
+  [ "$#" -ge 2 ] && [ -n "$2" ] || usage_error "$1 需要参数"
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$command:$1" in
+    convert:-t | convert:--to) need_value "$@"; target="$2"; shift 2 ;;
+    resize:-w | resize:--width) need_value "$@"; width="$2"; shift 2 ;;
+    resize:-H | resize:--height) need_value "$@"; height="$2"; shift 2 ;;
+    *:-o | *:--out-dir) need_value "$@"; out_dir="$2"; shift 2 ;;
+    *:-f | *:--force) force=1; shift ;;
+    *:-h | *:--help) "usage_$command"; exit 0 ;;
+    *:--) shift; files+=("$@"); break ;;
+    *:-*) usage_error "未知选项：$1" ;;
+    *) files+=("$1"); shift ;;
+  esac
+done
+
+[ "${#files[@]}" -gt 0 ] || usage_error "请指定图片文件"
+
+case "$command" in
+  convert)
+    [ -n "$target" ] || usage_error "convert 需要 -t 指定目标格式"
+    target="${target,,}"
+    case "$target" in
+      png | jpg | webp | avif) ;;
+      jpeg) target=jpg ;;
+      *) usage_error "不支持的目标格式：${target}（可选 png、jpg、webp、avif）" ;;
+    esac
+    ;;
+  resize)
+    [ -n "$width" ] || [ -n "$height" ] || usage_error "resize 需要 -w 或 -H"
+    ;;
+esac
+for value in "$width" "$height"; do
+  [ -z "$value" ] || [[ "$value" =~ ^[1-9][0-9]*$ ]] || usage_error "尺寸必须是正整数：$value"
+done
+
+require_deps
+
+tmp_root="$(mktemp -d)" || die "无法创建临时目录"
+trap 'rm -rf "$tmp_root"' EXIT
+file_index=0
+work="$tmp_root"
+failed=0
+
+for file in "${files[@]}"; do
+  process "$file" || failed=1
+done
+exit "$failed"
