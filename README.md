@@ -60,9 +60,7 @@ Skills 用于承载可复用的工作流和任务约定。简单 CLI 直接查�
 
 | 工具 | 说明 |
 | --- | --- |
-| [clipfmt](cli/clipfmt/) | macOS 剪贴板格式化：Jev 分流、本地 JSON/代码/时间/URL/表格及图片转换，DeepSeek 兜底整理错乱空白与换行 |
 | [cloudsaver-cli](cli/cloudsaver-cli/) | 网盘资源搜索与 115 转存工具（Telegram 搜索 / 115 转存） |
-| [config-sync](cli/config-sync/) | 一条命令按 TOML 单向推送全部配置文件 / 目录到多台 SSH 主机，覆盖前备份，支持主机筛选、清理、预览和动态补全 |
 | [freecurrency-cli](cli/freecurrency-cli/) | Open Exchange Rates 汇率工具（金额换算 / 最新汇率 / 本地缓存） |
 | [img](cli/img/) | 图片视觉无损压缩、格式转换（任意输入 → png / jpg / webp / avif）与改尺寸，按格式调用 vips、pngquant、oxipng、mozjpeg、avifenc |
 | [myskills](cli/myskills/) | 管理 AI Skills 的链接、安装与卸载（list / link / install / unlink / uninstall / status） |
@@ -73,15 +71,6 @@ Skills 用于承载可复用的工作流和任务约定。简单 CLI 直接查�
 | [cos-cli](cli/cos-cli/) | 上传图片或文件夹到腾讯云 COS（配置文件 / MD5 命名 / 自定义前缀 / 预览 / URL 与 JSON 输出） |
 | [testpage-cli](cli/testpage-cli/) | 测试 HTML 页面快速发布工具（同步目录 / 覆盖目标 / Git 提交并推送 / 返回访问 URL） |
 | [wt-land](cli/wt-land/) | 将当前功能分支 rebase 后 fast-forward 到本地目标分支，支持同目录和多 worktree |
-
-### clipfmt 用法
-
-```bash
-clipfmt --check  # 检查配置和依赖，不操作剪贴板
-clipfmt          # 格式化当前剪贴板，成功后重新复制
-```
-
-密钥配置、内容外发和支持范围见 [clipfmt 文档](cli/clipfmt/README.md)。
 
 ### myskills 用法
 
@@ -106,27 +95,6 @@ myskills status                                # 查看状态（软链接或已�
 | `--claude` | `~/.claude/skills/` |
 | `--local-agents` | `./.agents/skills/`（当前目录） |
 | `--local-claude` | `./.claude/skills/`（当前目录） |
-
-### config-sync 用法
-
-安装后运行 `config-sync init`，在 `~/.config/config-sync/config.toml` 创建全注释模板，不覆盖已有配置。取消所需表头与配置项的注释，修改主机 / 路径即可使用，例如：
-
-```toml
-[hosts.home.files]
-htask = "~/.config/htask/config.toml"       # 两端同路径
-zsh = ["~/.zshrc", "~/.config/zsh/.zshrc"]  # [本机路径, 目标路径]
-[hosts.home.dirs]
-nvim = "~/.config/nvim/"                   # 末尾 / 可有可无
-```
-
-```bash
-config-sync --dry-run    # 校验全部来源并显示计划，不联网
-config-sync              # 同步所有主机配置的全部文件和目录
-config-sync --host home  # 同步 home 配置的全部内容，--host 可重复
-config-sync clean        # 清理当前配置涉及的所有目标的备份
-```
-
-配置中的键只是便于阅读和日志定位的标签，不需要输入名称参数。覆盖前保存整个原文件 / 目录；**目录是完整镜像，目标多余内容会删除**。安装、备份和清理边界见 [config-sync 文档](cli/config-sync/README.md)，更多主机写法见 [TOML 示例](cli/config-sync/config.example.toml)。
 
 ## License
 
